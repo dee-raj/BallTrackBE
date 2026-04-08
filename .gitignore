@@ -135,3 +135,6 @@ public/
 # // backup
 backups/
 *.zip
+
+# // docs
+docs/

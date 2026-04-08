@@ -8,6 +8,7 @@ import type {
   UpdateMatchStatusDto,
   DeclareInningsDto,
 } from '../dto';
+import { emitBallAdded, emitBallRemoved, emitInningsEnd, emitOverComplete } from '../../../shared/realtime';
 
 interface BallResult {
   totalRuns: number;
@@ -225,15 +226,36 @@ export async function startInnings(data: StartInningsDto) {
 
 export async function recordBall(data: BallInputDto) {
   return prisma.$transaction(async (tx) => {
+    const match = await tx.match.findUnique({ where: { id: data.matchId } });
+    if (!match) throw new NotFoundError('Match not found');
+
+    if (match.matchStatus !== 'in_progress' && match.matchStatus !== 'second_innings') {
+      throw new ValidationError('Match is not in progress');
+    }
+
+    if (data.expectedVersion !== undefined && match.version !== data.expectedVersion) {
+      throw new ConflictError('Match state changed. Please refresh and retry.');
+    }
+
+    if (data.requestId) {
+      const existingBall = await tx.ball.findUnique({ where: { requestId: data.requestId } });
+      if (existingBall) {
+        return existingBall;
+      }
+    }
+
     const innings = await tx.innings.findUnique({ where: { id: data.inningsId } });
     if (!innings) throw new NotFoundError('Innings not found');
     if (innings.status !== 'in_progress') {
       throw new ValidationError('Innings is not in progress');
     }
 
-    const match = await tx.match.findUnique({ where: { id: data.matchId } });
-    if (!match || (match.matchStatus !== 'in_progress' && match.matchStatus !== 'second_innings')) {
-      throw new ValidationError('Match is not in progress');
+    if (innings.totalWickets >= 10) {
+      throw new ConflictError('All wickets already fell');
+    }
+
+    if (innings.targetRuns && innings.totalRuns >= innings.targetRuns) {
+      throw new ConflictError('Target already reached');
     }
 
     const lastBall = await tx.ball.findFirst({
@@ -274,32 +296,86 @@ export async function recordBall(data: BallInputDto) {
         fielderPlayerId: data.fielderPlayerId,
         isStrikeRotation,
         overComplete: ballInOver === 6 ? 'yes' : 'not_applicable' as any,
+        requestId: data.requestId || null,
       },
     });
 
     await scoringEngine.recompute(data.inningsId);
 
-    const allOut = await scoringEngine.checkAllOut(data.inningsId);
+    const updatedInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
+    if (!updatedInnings) throw new NotFoundError('Innings not found');
 
-    const matchUpdate: any = {};
+    const allOut = updatedInnings.totalWickets >= 10;
+    const targetReached = updatedInnings.targetRuns && updatedInnings.totalRuns >= updatedInnings.targetRuns;
+
+    const matchUpdate: any = { version: { increment: 1 } };
+
     if (allOut && innings.inningsNumber === 1) {
-      const targetRuns = innings.totalRuns + 1;
       await tx.innings.update({
         where: { id: data.inningsId },
-        data: { targetRuns, status: 'completed', allOut: true },
+        data: { targetRuns: updatedInnings.totalRuns + 1, status: 'completed', allOut: true },
       });
       matchUpdate.matchStatus = 'tea_break';
+      emitInningsEnd(data.matchId, {
+        innings: { ...updatedInnings, status: 'completed', allOut: true },
+        match: { ...match, matchStatus: 'tea_break', version: match.version + 1 },
+        reason: 'all_out',
+      });
     } else if (allOut && innings.inningsNumber === 2) {
+      const target = updatedInnings.targetRuns ?? updatedInnings.totalRuns + 1;
+      const isTie = updatedInnings.totalRuns === target - 1;
       await tx.innings.update({
         where: { id: data.inningsId },
         data: { status: 'completed', allOut: true },
       });
       matchUpdate.matchStatus = 'completed';
+      if (isTie) {
+        matchUpdate.resultMargin = 'Tie';
+      } else {
+        const runsMargin = updatedInnings.totalRuns - (target - 1);
+        matchUpdate.resultMargin = `${runsMargin} wickets`;
+        matchUpdate.winnerTeamId = updatedInnings.battingTeamId;
+      }
+      emitInningsEnd(data.matchId, {
+        innings: { ...updatedInnings, status: 'completed', allOut: true },
+        match: { ...match, matchStatus: 'completed', version: match.version + 1 },
+        reason: 'all_out',
+      });
+    } else if (targetReached && innings.inningsNumber === 2) {
+      const target = updatedInnings.targetRuns ?? updatedInnings.totalRuns + 1;
+      const runsMargin = updatedInnings.totalRuns - (target - 1);
+      await tx.innings.update({
+        where: { id: data.inningsId },
+        data: { status: 'completed' },
+      });
+      matchUpdate.matchStatus = 'completed';
+      matchUpdate.winnerTeamId = updatedInnings.battingTeamId;
+      matchUpdate.resultMargin = `${runsMargin} wickets`;
+      emitInningsEnd(data.matchId, {
+        innings: { ...updatedInnings, status: 'completed' },
+        match: { ...match, matchStatus: 'completed', version: match.version + 1 },
+        reason: 'target_reached',
+      });
     }
 
-    if (Object.keys(matchUpdate).length > 0) {
-      await tx.match.update({ where: { id: data.matchId }, data: matchUpdate });
+    if (ballInOver === 6) {
+      const refreshedInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
+      emitOverComplete(data.matchId, {
+        overNumber,
+        innings: refreshedInnings,
+      });
     }
+
+    await tx.match.update({ where: { id: data.matchId }, data: matchUpdate });
+
+    const finalMatch = await tx.match.findUnique({ where: { id: data.matchId } });
+    const finalInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
+
+    emitBallAdded(data.matchId, {
+      ball,
+      innings: finalInnings,
+      match: finalMatch,
+    });
 
     return ball;
   });
@@ -307,6 +383,9 @@ export async function recordBall(data: BallInputDto) {
 
 export async function undoLastBall(matchId: string) {
   return prisma.$transaction(async (tx) => {
+    const match = await tx.match.findUnique({ where: { id: matchId } });
+    if (!match) throw new NotFoundError('Match not found');
+
     const innings = await tx.innings.findFirst({
       where: { match: { id: matchId }, status: 'in_progress' },
     });
@@ -323,12 +402,17 @@ export async function undoLastBall(matchId: string) {
     await scoringEngine.recompute(innings.id);
 
     const updatedInnings = await tx.innings.findUnique({ where: { id: innings.id } });
-    if (updatedInnings) {
-      await tx.match.update({
-        where: { id: matchId },
-        data: { matchStatus: 'in_progress' },
-      });
-    }
+    await tx.match.update({
+      where: { id: matchId },
+      data: { version: { increment: 1 }, matchStatus: match.matchStatus === 'completed' ? 'in_progress' : undefined },
+    });
+
+    const updatedMatch = await tx.match.findUnique({ where: { id: matchId } });
+
+    emitBallRemoved(matchId, {
+      innings: updatedInnings,
+      match: updatedMatch,
+    });
 
     return lastBall;
   });

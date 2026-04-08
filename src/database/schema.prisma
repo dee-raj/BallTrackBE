@@ -4,6 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============================================
@@ -164,6 +165,7 @@ model Match {
   scorerId           String        @map("scorer_id")
   homeTeamId         String        @map("home_team_id")
   awayTeamId         String        @map("away_team_id")
+  version            Int           @default(1)
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
@@ -227,6 +229,7 @@ model Ball {
   fielderPlayerId    String?         @map("fielder_player_id")
   isStrikeRotation   Boolean         @default(false) @map("is_strike_rotation")
   overComplete       OverSetComplete @default(not_applicable) @map("over_complete")
+  requestId          String?         @unique @map("request_id")
   createdAt          DateTime        @default(now()) @map("created_at")
 
   innings      Innings @relation(fields: [inningsId], references: [id], onDelete: Cascade)

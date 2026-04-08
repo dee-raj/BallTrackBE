@@ -16,6 +16,13 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// logs request
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  next();
+  console.log(`[${new Date().toISOString()}] - ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - startTime}ms`);
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/players', playersRoutes);

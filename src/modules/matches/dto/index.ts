@@ -48,6 +48,9 @@ export const ballInputSchema = z.object({
   isWicket: z.boolean().default(false),
   wicketType: z.enum(['bowled', 'caught', 'lbw', 'run_out', 'stumped', 'hit_wicket', 'handled_ball', 'obstructing_field', 'timed_out']).optional(),
   fielderPlayerId: z.string().uuid().optional(),
+  
+  expectedVersion: z.number().int().min(1).optional(),
+  requestId: z.string().uuid().optional(),
 });
 
 export type BallInputDto = z.infer<typeof ballInputSchema>;

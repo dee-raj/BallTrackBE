@@ -1,9 +1,12 @@
 import app from './app';
 import { config } from './config';
 import { createServer } from 'http';
+import { initRealtime } from './shared/realtime';
 
 const PORT = config.port;
 const server = createServer(app);
+
+initRealtime(server);
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT} in ${config.nodeEnv} mode`);
