@@ -70,7 +70,8 @@ export class PlayersController {
 
   async removeFromTeam(req: Request, res: Response, next: NextFunction) {
     try {
-      const data = removePlayerFromTeamSchema.parse(req.body);
+      const { teamId, playerId } = req.params;
+      const data = removePlayerFromTeamSchema.parse({ teamId, playerId });
       await playersService.removeFromTeam(data);
       res.status(204).send();
     } catch (error) {

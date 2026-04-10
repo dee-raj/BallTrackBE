@@ -5,7 +5,7 @@ export const createPlayerSchema = z.object({
   phone: z.string().max(20).optional(),
   email: z.string().email().optional(),
   photoUrl: z.string().url().optional(),
-  dateOfBirth: z.string().datetime().optional(),
+  dateOfBirth: z.string().optional(),
 });
 
 export type CreatePlayerDto = z.infer<typeof createPlayerSchema>;
@@ -15,7 +15,7 @@ export const updatePlayerSchema = z.object({
   phone: z.string().max(20).optional(),
   email: z.string().email().optional(),
   photoUrl: z.string().url().optional(),
-  dateOfBirth: z.string().datetime().optional(),
+  dateOfBirth: z.string().optional(),
 });
 
 export type UpdatePlayerDto = z.infer<typeof updatePlayerSchema>;

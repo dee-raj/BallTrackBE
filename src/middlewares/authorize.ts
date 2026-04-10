@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { UserRole } from '../shared/constants';
+import { ROLE_HIERARCHY, UserRole } from '../shared/constants';
 import { ForbiddenError } from './error_handler';
 
 type Role = UserRole | UserRole[];
@@ -16,7 +16,13 @@ export function authorize(allowedRoles: Role) {
 
     const userRole = user.role as UserRole;
 
-    if (!roles.includes(userRole)) {
+    const isAllowed = roles.some((role) => {
+      const userLevel = ROLE_HIERARCHY[userRole];
+      const requiredLevel = ROLE_HIERARCHY[role];
+      return userLevel >= requiredLevel;
+    });
+
+    if (!isAllowed) {
       next(new ForbiddenError('Insufficient permissions'));
       return;
     }

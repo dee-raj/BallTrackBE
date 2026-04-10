@@ -3,6 +3,7 @@ import jwt, { JsonWebTokenError } from 'jsonwebtoken';
 import { config } from '../config';
 import prisma from '../database';
 import { UnauthorizedError } from './error_handler';
+import { safeUserSelect } from '../shared/user';
 
 export interface JwtPayload {
   userId: string;
@@ -28,6 +29,7 @@ export async function authenticate(
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
+      select: safeUserSelect,
     });
 
     if (!user || !user.isActive) {

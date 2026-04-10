@@ -23,6 +23,14 @@ export class AuthController {
       next(error);
     }
   }
+
+  async getMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      res.status(200).json((req as any).user);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const authController = new AuthController();

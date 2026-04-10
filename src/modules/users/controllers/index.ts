@@ -2,9 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { usersService } from '../services';
 import { updateProfileSchema } from '../dto';
 import { validateBody } from '../../../middlewares/validate';
-import { UserRole } from '../../../shared/constants';
-import { authorize } from '../../../middlewares/authorize';
-import { JwtPayload } from '../../../middlewares/authenticate';
 
 export class UsersController {
   async getProfile(req: Request, res: Response, next: NextFunction) {

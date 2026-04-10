@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { NotFoundError, ConflictError, ValidationError } from '../../../middlewares/error_handler';
 import prisma from '../../../database';
 import type {
@@ -5,10 +6,12 @@ import type {
   TossDto,
   BallInputDto,
   StartInningsDto,
-  UpdateMatchStatusDto,
   DeclareInningsDto,
 } from '../dto';
 import { emitBallAdded, emitBallRemoved, emitInningsEnd, emitOverComplete } from '../../../shared/realtime';
+
+type DbClient = Prisma.TransactionClient;
+type InningsEndReason = 'all_out' | 'target_reached' | 'overs_complete' | 'declared';
 
 interface BallResult {
   totalRuns: number;
@@ -16,14 +19,114 @@ interface BallResult {
   isLegal: boolean;
 }
 
+interface RecordBallTransactionResult {
+  ball: Awaited<ReturnType<DbClient['ball']['create']>>;
+  innings: Awaited<ReturnType<DbClient['innings']['findUnique']>>;
+  match: Awaited<ReturnType<DbClient['match']['findUnique']>>;
+  overNumber: number;
+  emitOverEnd: boolean;
+  inningsEndReason?: InningsEndReason;
+}
+
+function isLegalDelivery(ballType: string): boolean {
+  return ballType !== 'wide' && ballType !== 'no_ball';
+}
+
+function toOversNotation(legalBalls: number): number {
+  return Math.floor(legalBalls / 6) + (legalBalls % 6) / 10;
+}
+
+function getRunRate(totalRuns: number, legalBalls: number): number {
+  if (legalBalls === 0) {
+    return 0;
+  }
+
+  return parseFloat((totalRuns / (legalBalls / 6)).toFixed(2));
+}
+
+async function recomputeInnings(db: DbClient, inningsId: string): Promise<void> {
+  const balls = await db.ball.findMany({
+    where: { inningsId },
+    orderBy: { sequenceNo: 'asc' },
+  });
+
+  let totalRuns = 0;
+  let totalWickets = 0;
+  let totalExtras = 0;
+  let legalBalls = 0;
+
+  for (const ball of balls) {
+    totalRuns += ball.runsScored + ball.extras;
+    totalExtras += ball.extras;
+
+    if (ball.wicketType) {
+      totalWickets++;
+    }
+
+    if (isLegalDelivery(ball.ballType)) {
+      legalBalls++;
+    }
+  }
+
+  await db.innings.update({
+    where: { id: inningsId },
+    data: {
+      totalRuns,
+      totalWickets,
+      totalExtras,
+      legalBalls,
+      oversBowled: toOversNotation(legalBalls),
+      allOut: totalWickets >= 10,
+    },
+  });
+}
+
+async function getSecondInningsTarget(db: DbClient, matchId: string): Promise<number> {
+  const firstInnings = await db.innings.findFirst({
+    where: { matchId, inningsNumber: 1 },
+  });
+
+  if (!firstInnings || firstInnings.status !== 'completed') {
+    throw new ValidationError('First innings must be completed before starting the chase');
+  }
+
+  return firstInnings.totalRuns + 1;
+}
+
+function getChaseResult(
+  innings: NonNullable<RecordBallTransactionResult['innings']>
+): { winnerTeamId?: string; resultMargin: string } {
+  const target = innings.targetRuns;
+  if (!target) {
+    throw new ValidationError('Second innings target is missing');
+  }
+
+  const defendingScore = target - 1;
+
+  if (innings.totalRuns > defendingScore) {
+    return {
+      winnerTeamId: innings.battingTeamId,
+      resultMargin: `${10 - innings.totalWickets} wickets`,
+    };
+  }
+
+  if (innings.totalRuns === defendingScore) {
+    return { resultMargin: 'Tie' };
+  }
+
+  return {
+    winnerTeamId: innings.bowlingTeamId,
+    resultMargin: `${defendingScore - innings.totalRuns} runs`,
+  };
+}
+
 export class ScoringEngine {
   processBall(input: {
     runsOffBat: number;
     extraType: string;
     extraRuns: number;
-    isWicket: boolean;
   }): BallResult {
-    const isLegal = input.extraType === 'normal';
+    const isLegal = isLegalDelivery(input.extraType);
     let extras = 0;
 
     if (input.extraType === 'wide' || input.extraType === 'no_ball') {
@@ -32,103 +135,11 @@ export class ScoringEngine {
       extras = input.extraRuns;
     }
 
-    const totalRuns = input.runsOffBat + extras;
-
-    return { totalRuns, extras, isLegal };
-  }
-
-  async recompute(inningsId: string): Promise<void> {
-    const balls = await prisma.ball.findMany({
-      where: { inningsId },
-      orderBy: { sequenceNo: 'asc' },
-    });
-
-    let totalRuns = 0;
-    let totalWickets = 0;
-    let totalExtras = 0;
-    let legalBalls = 0;
-
-    for (const ball of balls) {
-      const result = this.processBall({
-        runsOffBat: ball.runsScored,
-        extraType: ball.ballType,
-        extraRuns: ball.extras > 0 ? ball.extras - (ball.wicketType ? 0 : 0) : 0,
-        isWicket: !!ball.wicketType,
-      });
-
-      totalRuns += result.totalRuns;
-      totalExtras += result.extras;
-
-      if (ball.wicketType) {
-        totalWickets++;
-      }
-
-      if (result.isLegal) {
-        legalBalls++;
-      }
-    }
-
-    const oversBowled = legalBalls / 6;
-
-    await prisma.innings.update({
-      where: { id: inningsId },
-      data: {
-        totalRuns,
-        totalWickets,
-        totalExtras,
-        legalBalls,
-        oversBowled,
-        allOut: totalWickets >= 10,
-      },
-    });
-  }
-
-  async checkAllOut(inningsId: string): Promise<boolean> {
-    const innings = await prisma.innings.findUnique({
-      where: { id: inningsId },
-    });
-
-    if (innings && innings.totalWickets >= 10) {
-      await prisma.innings.update({
-        where: { id: inningsId },
-        data: { allOut: true },
-      });
-      return true;
-    }
-    return false;
-  }
-
-  async checkOversComplete(inningsId: string, matchOvers: number): Promise<boolean> {
-    const innings = await prisma.innings.findUnique({
-      where: { id: inningsId },
-    });
-
-    if (innings && innings.oversBowled >= matchOvers) {
-      return true;
-    }
-    return false;
-  }
-
-  async checkTargetReached(inningsId: string): Promise<{ reached: boolean; margin?: string }> {
-    const innings = await prisma.innings.findUnique({
-      where: { id: inningsId },
-      include: { match: true },
-    });
-
-    if (!innings || !innings.targetRuns) {
-      return { reached: false };
-    }
-
-    if (innings.totalRuns >= innings.targetRuns) {
-      const runsMargin = innings.totalRuns - innings.targetRuns + 1;
-      return { reached: true, margin: `${runsMargin} wickets` };
-    }
-
-    if (innings.targetWickets && innings.totalWickets >= innings.targetWickets) {
-      return { reached: true, margin: `${innings.targetWickets - innings.totalWickets} runs` };
-    }
-
-    return { reached: false };
+    return {
+      totalRuns: input.runsOffBat + extras,
+      extras,
+      isLegal,
+    };
   }
 }
 
@@ -203,29 +214,40 @@ export async function startInnings(data: StartInningsDto) {
   });
   if (existing) throw new ConflictError('Innings already started');
 
-  const innings = await prisma.innings.create({
-    data: {
+  const innings = await prisma.$transaction(async (tx) => {
+    const inningsData: Prisma.InningsUncheckedCreateInput = {
       matchId: data.matchId,
       inningsNumber: data.inningsNumber,
       battingTeamId: data.battingTeamId,
       bowlingTeamId: data.bowlingTeamId,
       status: 'in_progress',
-    },
-  });
+    };
 
-  const status = data.inningsNumber === 1 ? 'in_progress' : 'second_innings';
-  const inningsIdField = data.inningsNumber === 1 ? 'firstInningsId' : 'secondInningsId';
+    if (data.inningsNumber === 2) {
+      inningsData.targetRuns = await getSecondInningsTarget(tx, data.matchId);
+      inningsData.targetWickets = 10;
+    }
 
-  await prisma.match.update({
-    where: { id: data.matchId },
-    data: { matchStatus: status, [inningsIdField]: innings.id },
+    const createdInnings = await tx.innings.create({
+      data: inningsData,
+    });
+
+    const status = data.inningsNumber === 1 ? 'in_progress' : 'second_innings';
+    const inningsIdField = data.inningsNumber === 1 ? 'firstInningsId' : 'secondInningsId';
+
+    await tx.match.update({
+      where: { id: data.matchId },
+      data: { matchStatus: status, [inningsIdField]: createdInnings.id },
+    });
+
+    return createdInnings;
   });
 
   return innings;
 }
 
 export async function recordBall(data: BallInputDto) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction<RecordBallTransactionResult>(async (tx) => {
     const match = await tx.match.findUnique({ where: { id: data.matchId } });
     if (!match) throw new NotFoundError('Match not found');
 
@@ -240,12 +262,30 @@ export async function recordBall(data: BallInputDto) {
     if (data.requestId) {
       const existingBall = await tx.ball.findUnique({ where: { requestId: data.requestId } });
       if (existingBall) {
-        return existingBall;
+        const currentInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
+        const currentMatch = await tx.match.findUnique({ where: { id: data.matchId } });
+        const previousLegalBalls = await tx.ball.count({
+          where: {
+            inningsId: data.inningsId,
+            ballType: { notIn: ['wide', 'no_ball'] },
+          },
+        });
+
+        return {
+          ball: existingBall,
+          innings: currentInnings,
+          match: currentMatch,
+          overNumber: Math.floor(Math.max(previousLegalBalls - 1, 0) / 6) + 1,
+          emitOverEnd: false,
+        };
       }
     }
 
     const innings = await tx.innings.findUnique({ where: { id: data.inningsId } });
     if (!innings) throw new NotFoundError('Innings not found');
+    if (innings.matchId !== data.matchId) {
+      throw new ValidationError('Innings does not belong to this match');
+    }
     if (innings.status !== 'in_progress') {
       throw new ValidationError('Innings is not in progress');
     }
@@ -258,112 +298,95 @@ export async function recordBall(data: BallInputDto) {
       throw new ConflictError('Target already reached');
     }
 
+    const resultForBall = scoringEngine.processBall({
+      runsOffBat: data.runsOffBat,
+      extraType: data.extraType,
+      extraRuns: data.extraRuns,
+    });
+
     const lastBall = await tx.ball.findFirst({
       where: { inningsId: data.inningsId },
       orderBy: { sequenceNo: 'desc' },
     });
     const sequenceNo = lastBall ? lastBall.sequenceNo + 1 : 1;
 
-    const overNumber = Math.floor((sequenceNo - 1) / 6) + 1;
-    const ballInOver = ((sequenceNo - 1) % 6) + 1;
-
-    const result = scoringEngine.processBall({
-      runsOffBat: data.runsOffBat,
-      extraType: data.extraType,
-      extraRuns: data.extraRuns,
-      isWicket: data.isWicket,
+    const previousLegalBalls = await tx.ball.count({
+      where: {
+        inningsId: data.inningsId,
+        ballType: { notIn: ['wide', 'no_ball'] },
+      },
     });
+    const overNumber = Math.floor(previousLegalBalls / 6) + 1;
+    const ballNumber = (previousLegalBalls % 6) + 1;
+    const emitOverEnd = resultForBall.isLegal && ballNumber === 6;
 
-    let isStrikeRotation = false;
-    if (!data.isWicket && data.runsOffBat % 2 === 1) {
-      isStrikeRotation = true;
-    }
+    const totalRunsOnBall = data.runsOffBat + resultForBall.extras;
+    const isStrikeRotation = !data.isWicket && totalRunsOnBall % 2 === 1;
 
     const ball = await tx.ball.create({
       data: {
         inningsId: data.inningsId,
         overNumber,
-        ballNumber: ballInOver,
+        ballNumber,
         sequenceNo,
         batsmanPlayerId: data.batsmanPlayerId,
         nonStrikerPlayerId: data.nonStrikerPlayerId,
         bowlerPlayerId: data.bowlerPlayerId,
-        ballType: data.extraType as any,
+        ballType: data.extraType,
         runsScored: data.runsOffBat,
-        extras: result.extras,
-        wicketType: data.isWicket ? (data.wicketType as any) : undefined,
+        extras: resultForBall.extras,
+        wicketType: data.isWicket ? data.wicketType : undefined,
         wicketPlayerId: data.isWicket ? data.batsmanPlayerId : undefined,
         fielderPlayerId: data.fielderPlayerId,
         isStrikeRotation,
-        overComplete: ballInOver === 6 ? 'yes' : 'not_applicable' as any,
+        overComplete: emitOverEnd ? 'yes' : 'not_applicable',
         requestId: data.requestId || null,
       },
     });
 
-    await scoringEngine.recompute(data.inningsId);
+    await recomputeInnings(tx, data.inningsId);
 
-    const updatedInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
+    let updatedInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
     if (!updatedInnings) throw new NotFoundError('Innings not found');
 
     const allOut = updatedInnings.totalWickets >= 10;
-    const targetReached = updatedInnings.targetRuns && updatedInnings.totalRuns >= updatedInnings.targetRuns;
+    const targetReached = updatedInnings.targetRuns !== null && updatedInnings.totalRuns >= updatedInnings.targetRuns;
+    const oversComplete = updatedInnings.legalBalls >= match.overs * 6;
 
-    const matchUpdate: any = { version: { increment: 1 } };
+    const matchUpdate: Prisma.MatchUncheckedUpdateInput = { version: { increment: 1 } };
+    let inningsEndReason: InningsEndReason | undefined;
 
-    if (allOut && innings.inningsNumber === 1) {
-      await tx.innings.update({
+    if (innings.inningsNumber === 1 && (allOut || oversComplete)) {
+      updatedInnings = await tx.innings.update({
         where: { id: data.inningsId },
-        data: { targetRuns: updatedInnings.totalRuns + 1, status: 'completed', allOut: true },
+        data: {
+          status: 'completed',
+          targetRuns: updatedInnings.totalRuns + 1,
+          allOut,
+        },
       });
       matchUpdate.matchStatus = 'tea_break';
-      emitInningsEnd(data.matchId, {
-        innings: { ...updatedInnings, status: 'completed', allOut: true },
-        match: { ...match, matchStatus: 'tea_break', version: match.version + 1 },
-        reason: 'all_out',
-      });
-    } else if (allOut && innings.inningsNumber === 2) {
-      const target = updatedInnings.targetRuns ?? updatedInnings.totalRuns + 1;
-      const isTie = updatedInnings.totalRuns === target - 1;
-      await tx.innings.update({
+      inningsEndReason = allOut ? 'all_out' : 'overs_complete';
+    } else if (innings.inningsNumber === 2 && targetReached) {
+      const chaseResult = getChaseResult(updatedInnings);
+      updatedInnings = await tx.innings.update({
         where: { id: data.inningsId },
-        data: { status: 'completed', allOut: true },
+        data: { status: 'completed', allOut },
       });
       matchUpdate.matchStatus = 'completed';
-      if (isTie) {
-        matchUpdate.resultMargin = 'Tie';
-      } else {
-        const runsMargin = updatedInnings.totalRuns - (target - 1);
-        matchUpdate.resultMargin = `${runsMargin} wickets`;
-        matchUpdate.winnerTeamId = updatedInnings.battingTeamId;
-      }
-      emitInningsEnd(data.matchId, {
-        innings: { ...updatedInnings, status: 'completed', allOut: true },
-        match: { ...match, matchStatus: 'completed', version: match.version + 1 },
-        reason: 'all_out',
-      });
-    } else if (targetReached && innings.inningsNumber === 2) {
-      const target = updatedInnings.targetRuns ?? updatedInnings.totalRuns + 1;
-      const runsMargin = updatedInnings.totalRuns - (target - 1);
-      await tx.innings.update({
+      matchUpdate.winnerTeamId = chaseResult.winnerTeamId;
+      matchUpdate.resultMargin = chaseResult.resultMargin;
+      inningsEndReason = 'target_reached';
+    } else if (innings.inningsNumber === 2 && (allOut || oversComplete)) {
+      const chaseResult = getChaseResult(updatedInnings);
+      updatedInnings = await tx.innings.update({
         where: { id: data.inningsId },
-        data: { status: 'completed' },
+        data: { status: 'completed', allOut },
       });
       matchUpdate.matchStatus = 'completed';
-      matchUpdate.winnerTeamId = updatedInnings.battingTeamId;
-      matchUpdate.resultMargin = `${runsMargin} wickets`;
-      emitInningsEnd(data.matchId, {
-        innings: { ...updatedInnings, status: 'completed' },
-        match: { ...match, matchStatus: 'completed', version: match.version + 1 },
-        reason: 'target_reached',
-      });
-    }
-
-    if (ballInOver === 6) {
-      const refreshedInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
-      emitOverComplete(data.matchId, {
-        overNumber,
-        innings: refreshedInnings,
-      });
+      matchUpdate.winnerTeamId = chaseResult.winnerTeamId;
+      matchUpdate.resultMargin = chaseResult.resultMargin;
+      inningsEndReason = allOut ? 'all_out' : 'overs_complete';
     }
 
     await tx.match.update({ where: { id: data.matchId }, data: matchUpdate });
@@ -371,23 +394,48 @@ export async function recordBall(data: BallInputDto) {
     const finalMatch = await tx.match.findUnique({ where: { id: data.matchId } });
     const finalInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
 
-    emitBallAdded(data.matchId, {
+    return {
       ball,
       innings: finalInnings,
       match: finalMatch,
-    });
-
-    return ball;
+      overNumber,
+      emitOverEnd,
+      inningsEndReason,
+    };
   });
+
+  if (result.inningsEndReason && result.innings && result.match) {
+    emitInningsEnd(data.matchId, {
+      innings: result.innings,
+      match: result.match,
+      reason: result.inningsEndReason,
+    });
+  }
+
+  if (result.emitOverEnd && result.innings) {
+    emitOverComplete(data.matchId, {
+      overNumber: result.overNumber,
+      innings: result.innings,
+    });
+  }
+
+  emitBallAdded(data.matchId, {
+    ball: result.ball,
+    innings: result.innings,
+    match: result.match,
+  });
+
+  return result.ball;
 }
 
 export async function undoLastBall(matchId: string) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const match = await tx.match.findUnique({ where: { id: matchId } });
     if (!match) throw new NotFoundError('Match not found');
 
     const innings = await tx.innings.findFirst({
       where: { match: { id: matchId }, status: 'in_progress' },
+      orderBy: { inningsNumber: 'desc' },
     });
     if (!innings) throw new ValidationError('No innings in progress');
 
@@ -398,58 +446,86 @@ export async function undoLastBall(matchId: string) {
     if (!lastBall) throw new ValidationError('No balls to undo');
 
     await tx.ball.delete({ where: { id: lastBall.id } });
-
-    await scoringEngine.recompute(innings.id);
+    await recomputeInnings(tx, innings.id);
 
     const updatedInnings = await tx.innings.findUnique({ where: { id: innings.id } });
     await tx.match.update({
       where: { id: matchId },
-      data: { version: { increment: 1 }, matchStatus: match.matchStatus === 'completed' ? 'in_progress' : undefined },
+      data: {
+        version: { increment: 1 },
+        matchStatus: match.matchStatus === 'completed' ? 'in_progress' : undefined,
+      },
     });
 
     const updatedMatch = await tx.match.findUnique({ where: { id: matchId } });
 
-    emitBallRemoved(matchId, {
+    return {
+      lastBall,
       innings: updatedInnings,
       match: updatedMatch,
-    });
-
-    return lastBall;
+    };
   });
+
+  emitBallRemoved(matchId, {
+    innings: result.innings,
+    match: result.match,
+  });
+
+  return result.lastBall;
 }
 
 export async function declareInnings(data: DeclareInningsDto) {
-  const innings = await prisma.innings.findUnique({ where: { id: data.inningsId } });
-  if (!innings) throw new NotFoundError('Innings not found');
+  const result = await prisma.$transaction(async (tx) => {
+    const innings = await tx.innings.findUnique({ where: { id: data.inningsId } });
+    if (!innings) throw new NotFoundError('Innings not found');
 
-  const match = await prisma.match.findUnique({ where: { id: innings.matchId } });
-  if (!match) throw new NotFoundError('Match not found');
+    const match = await tx.match.findUnique({ where: { id: innings.matchId } });
+    if (!match) throw new NotFoundError('Match not found');
 
-  await prisma.$transaction(async (tx) => {
-    await tx.innings.update({
+    let updatedInnings = await tx.innings.update({
       where: { id: data.inningsId },
       data: { status: 'completed' },
     });
 
     if (innings.inningsNumber === 1) {
-      const targetRuns = innings.totalRuns + 1;
-      await tx.innings.update({
+      updatedInnings = await tx.innings.update({
         where: { id: data.inningsId },
-        data: { targetRuns },
+        data: { targetRuns: innings.totalRuns + 1 },
       });
       await tx.match.update({
         where: { id: match.id },
         data: { matchStatus: 'tea_break' },
       });
     } else {
+      const chaseResult = getChaseResult(updatedInnings);
       await tx.match.update({
         where: { id: match.id },
-        data: { matchStatus: 'completed' },
+        data: {
+          matchStatus: 'completed',
+          winnerTeamId: chaseResult.winnerTeamId,
+          resultMargin: chaseResult.resultMargin,
+        },
       });
     }
+
+    const updatedMatch = await tx.match.findUnique({ where: { id: match.id } });
+
+    return {
+      innings: updatedInnings,
+      match: updatedMatch,
+      reason: 'declared' as const,
+    };
   });
 
-  return innings;
+  if (result.match) {
+    emitInningsEnd(result.innings.matchId, {
+      innings: result.innings,
+      match: result.match,
+      reason: result.reason,
+    });
+  }
+
+  return result.innings;
 }
 
 export async function getMatchScoreboard(matchId: string) {
@@ -470,6 +546,8 @@ export async function getMatchScoreboard(matchId: string) {
   if (match.matchStatus === 'completed' && match.winnerTeamId) {
     const winner = match.homeTeamId === match.winnerTeamId ? match.homeTeam : match.awayTeam;
     result = `${winner?.name} won`;
+  } else if (match.matchStatus === 'completed' && match.resultMargin === 'Tie') {
+    result = 'Match tied';
   }
 
   return {
@@ -479,7 +557,12 @@ export async function getMatchScoreboard(matchId: string) {
     overs: match.overs,
     matchStatus: match.matchStatus,
     result,
+    resultMargin: match.resultMargin,
     winnerTeamId: match.winnerTeamId,
+    tossWinnerId: match.tossWinnerId,
+    tossDecision: match.tossDecision,
+    homeTeamId: match.homeTeamId,
+    awayTeamId: match.awayTeamId,
     homeTeam: match.homeTeam,
     awayTeam: match.awayTeam,
     innings: match.innings,
@@ -501,10 +584,6 @@ export async function getInningsScoreboard(matchId: string, inningsNumber: numbe
     orderBy: { sequenceNo: 'asc' },
   });
 
-  const runRate = innings.oversBowled > 0
-    ? (innings.totalRuns / innings.oversBowled).toFixed(2)
-    : '0.00';
-
   return {
     inningsNumber: innings.inningsNumber,
     battingTeam: innings.battingTeam,
@@ -513,24 +592,25 @@ export async function getInningsScoreboard(matchId: string, inningsNumber: numbe
     runs: innings.totalRuns,
     wickets: innings.totalWickets,
     overs: innings.oversBowled.toFixed(1),
-    runRate: parseFloat(runRate),
+    runRate: getRunRate(innings.totalRuns, innings.legalBalls),
     totalExtras: innings.totalExtras,
     legalBalls: innings.legalBalls,
     target: innings.targetRuns,
     allOut: innings.allOut,
-    balls: balls,
+    balls,
   };
 }
 
 export async function getOverDetails(matchId: string, overNumber: number) {
   const innings = await prisma.innings.findFirst({
-    where: { match: { id: matchId } },
+    where: { matchId },
+    orderBy: { inningsNumber: 'desc' },
   });
   if (!innings) throw new NotFoundError('Innings not found');
 
   const balls = await prisma.ball.findMany({
     where: { inningsId: innings.id, overNumber },
-    orderBy: { ballNumber: 'asc' },
+    orderBy: { sequenceNo: 'asc' },
     include: {
       batsman: true,
       bowler: true,
@@ -540,7 +620,7 @@ export async function getOverDetails(matchId: string, overNumber: number) {
   if (balls.length === 0) throw new NotFoundError('Over not found');
 
   const runs = balls.reduce((sum, b) => sum + b.runsScored + b.extras, 0);
-  const wickets = balls.filter(b => b.wicketType).length;
+  const wickets = balls.filter((b) => b.wicketType).length;
 
   return { overNumber, runs, wickets, balls };
 }

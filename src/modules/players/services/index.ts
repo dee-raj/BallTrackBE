@@ -60,7 +60,17 @@ export class PlayersService {
     if (!existing) {
       throw new NotFoundError('Player not found');
     }
-    return playersRepository.delete(id);
+    try {
+      return await playersRepository.delete(id);
+    } catch (error: any) {
+      // Prisma error code for foreign key constraint failed
+      if (error.code === 'P2003') {
+        throw new ConflictError(
+          'Cannot delete player. They have participated in matches or are assigned to a team. Remove them from matches/teams first.'
+        );
+      }
+      throw error;
+    }
   }
 
   async addToTeam(teamId: string, data: AddPlayerToTeamDto) {

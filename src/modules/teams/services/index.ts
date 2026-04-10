@@ -52,11 +52,20 @@ export class TeamsService {
   }
 
   async delete(id: string) {
-    const existing = await teamsRepository.findById(id);
-    if (!existing) {
-      throw new NotFoundError('Team not found');
+    try {
+      const existing = await teamsRepository.findById(id);
+      if (!existing) {
+        throw new NotFoundError('Team not found');
+      }
+      return await teamsRepository.delete(id);
+    } catch (error: any) {
+      if (error.code === 'P2003') {
+        throw new ConflictError(
+          'Cannot delete team. It is currently linked to matches or has registered players. Delete associated data first.'
+        );
+      }
+      throw error;
     }
-    return teamsRepository.delete(id);
   }
 }
 

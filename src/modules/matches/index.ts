@@ -8,12 +8,10 @@ const router = Router();
 
 router.get(
     '/',
-    authenticate,
     matchesController.getAll.bind(matchesController)
 );
 router.get(
     '/:id',
-    authenticate,
     matchesController.getById.bind(matchesController)
 );
 router.post(
@@ -61,17 +59,14 @@ router.post(
 
 router.get(
     '/:id/scoreboard',
-    authenticate,
     matchesController.getScoreboard.bind(matchesController)
 );
 router.get(
     '/:id/innings/:number',
-    authenticate,
     matchesController.getInningsScoreboard.bind(matchesController)
 );
 router.get(
     '/:id/over/:overNumber',
-    authenticate,
     matchesController.getOver.bind(matchesController)
 );
 
