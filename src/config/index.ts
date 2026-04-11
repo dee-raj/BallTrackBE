@@ -7,6 +7,9 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default('7d'),
   BCRYPT_ROUNDS: z.coerce.number().default(10),
+  CLOUDINARY_CLOUD_NAME: z.string(),
+  CLOUDINARY_API_KEY: z.string(),
+  CLOUDINARY_API_SECRET: z.string(),
 });
 
 const env = envSchema.parse(process.env);
@@ -23,6 +26,11 @@ export const config = {
   },
   bcrypt: {
     rounds: env.BCRYPT_ROUNDS,
+  },
+  cloudinary: {
+    cloudName: env.CLOUDINARY_CLOUD_NAME,
+    apiKey: env.CLOUDINARY_API_KEY,
+    apiSecret: env.CLOUDINARY_API_SECRET,
   },
 };
 

@@ -535,7 +535,14 @@ export async function getMatchScoreboard(matchId: string) {
       homeTeam: true,
       awayTeam: true,
       innings: {
-        include: { battingTeam: true, bowlingTeam: true },
+        include: {
+          battingTeam: true,
+          bowlingTeam: true,
+          balls: {
+            orderBy: { sequenceNo: 'desc' },
+            take: 12, // Get last 12 balls to cover current over even if long + previous
+          },
+        },
         orderBy: { inningsNumber: 'asc' },
       },
     },
