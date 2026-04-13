@@ -589,6 +589,13 @@ export async function getInningsScoreboard(matchId: string, inningsNumber: numbe
   const balls = await prisma.ball.findMany({
     where: { inningsId: innings.id },
     orderBy: { sequenceNo: 'asc' },
+    include: {
+      batsman: { select: { id: true, fullName: true } },
+      nonStriker: { select: { id: true, fullName: true } },
+      bowler: { select: { id: true, fullName: true } },
+      wicketPlayer: { select: { id: true, fullName: true } },
+      fielder: { select: { id: true, fullName: true } },
+    },
   });
 
   return {
@@ -606,6 +613,203 @@ export async function getInningsScoreboard(matchId: string, inningsNumber: numbe
     allOut: innings.allOut,
     balls,
   };
+}
+
+export async function getMatchPerformance(matchId: string) {
+  const match = await prisma.match.findUnique({
+    where: { id: matchId },
+    include: { homeTeam: true, awayTeam: true },
+  });
+  if (!match) throw new NotFoundError('Match not found');
+
+  const allInnings = await prisma.innings.findMany({
+    where: { matchId },
+    orderBy: { inningsNumber: 'asc' },
+    include: { battingTeam: true, bowlingTeam: true },
+  });
+
+  const performanceData = await Promise.all(
+    allInnings.map(async (innings) => {
+      const balls = await prisma.ball.findMany({
+        where: { inningsId: innings.id },
+        orderBy: { sequenceNo: 'asc' },
+        include: {
+          batsman: { select: { id: true, fullName: true } },
+          nonStriker: { select: { id: true, fullName: true } },
+          bowler: { select: { id: true, fullName: true } },
+          wicketPlayer: { select: { id: true, fullName: true } },
+          fielder: { select: { id: true, fullName: true } },
+        },
+      });
+
+      // --- Batting Scorecard ---
+      const battingMap = new Map<string, {
+        playerId: string;
+        playerName: string;
+        runs: number;
+        balls: number;
+        fours: number;
+        sixes: number;
+        dotBalls: number;
+        dismissed: boolean;
+        wicketType?: string;
+        fielderName?: string;
+        bowlerName?: string;
+        battingOrder: number;
+      }>();
+
+      let battingOrderCounter = 0;
+      const seenBatsmen = new Set<string>();
+
+      for (const ball of balls) {
+        // Register batsman in order of first appearance
+        for (const pid of [ball.batsmanPlayerId, ball.nonStrikerPlayerId]) {
+          const pName = pid === ball.batsmanPlayerId ? ball.batsman.fullName : ball.nonStriker.fullName;
+          if (!seenBatsmen.has(pid)) {
+            seenBatsmen.add(pid);
+            battingOrderCounter++;
+            battingMap.set(pid, {
+              playerId: pid,
+              playerName: pName,
+              runs: 0,
+              balls: 0,
+              fours: 0,
+              sixes: 0,
+              dotBalls: 0,
+              dismissed: false,
+              battingOrder: battingOrderCounter,
+            });
+          }
+        }
+
+        const entry = battingMap.get(ball.batsmanPlayerId)!;
+        // Only count runs off bat for the batsman
+        entry.runs += ball.runsScored;
+        // Count balls faced (legal deliveries to the batsman = all except wides)
+        if (ball.ballType !== 'wide') {
+          entry.balls++;
+          if (ball.runsScored === 0 && !ball.wicketType) entry.dotBalls++;
+        }
+        if (ball.runsScored === 4) entry.fours++;
+        if (ball.runsScored === 6) entry.sixes++;
+
+        // Dismissal
+        if (ball.wicketType && ball.wicketPlayerId) {
+          const dismissedEntry = battingMap.get(ball.wicketPlayerId);
+          if (dismissedEntry) {
+            dismissedEntry.dismissed = true;
+            dismissedEntry.wicketType = ball.wicketType;
+            dismissedEntry.bowlerName = ball.bowler.fullName;
+            dismissedEntry.fielderName = ball.fielder?.fullName;
+          }
+        }
+      }
+
+      const battingScorecard = Array.from(battingMap.values()).sort(
+        (a, b) => a.battingOrder - b.battingOrder
+      ).map((b) => ({
+        ...b,
+        strikeRate: b.balls > 0 ? parseFloat(((b.runs / b.balls) * 100).toFixed(1)) : 0,
+      }));
+
+      // --- Bowling Scorecard ---
+      const bowlingMap = new Map<string, {
+        playerId: string;
+        playerName: string;
+        ballsFaced: number; // legal deliveries only
+        runsConceded: number;
+        wickets: number;
+        maidens: number;
+        noBalls: number;
+        wides: number;
+        currentOverRuns: number;
+        currentOverBalls: number;
+        lastOverNumber: number;
+      }>();
+
+      for (const ball of balls) {
+        if (!bowlingMap.has(ball.bowlerPlayerId)) {
+          bowlingMap.set(ball.bowlerPlayerId, {
+            playerId: ball.bowlerPlayerId,
+            playerName: ball.bowler.fullName,
+            ballsFaced: 0,
+            runsConceded: 0,
+            wickets: 0,
+            maidens: 0,
+            noBalls: 0,
+            wides: 0,
+            currentOverRuns: 0,
+            currentOverBalls: 0,
+            lastOverNumber: ball.overNumber,
+          });
+        }
+        const bowlerEntry = bowlingMap.get(ball.bowlerPlayerId)!;
+
+        const totalBallRuns = ball.runsScored + ball.extras;
+        bowlerEntry.runsConceded += totalBallRuns;
+
+        if (ball.ballType === 'no_ball') bowlerEntry.noBalls++;
+        if (ball.ballType === 'wide') bowlerEntry.wides++;
+
+        const isLegal = ball.ballType !== 'wide' && ball.ballType !== 'no_ball';
+        if (isLegal) {
+          bowlerEntry.ballsFaced++;
+          // Track maiden detection: check if over changed
+          if (bowlerEntry.lastOverNumber !== ball.overNumber) {
+            // New over started for this bowler — check if previous over was maiden
+            if (bowlerEntry.currentOverRuns === 0 && bowlerEntry.currentOverBalls > 0) {
+              bowlerEntry.maidens++;
+            }
+            bowlerEntry.currentOverRuns = 0;
+            bowlerEntry.currentOverBalls = 0;
+            bowlerEntry.lastOverNumber = ball.overNumber;
+          }
+          bowlerEntry.currentOverRuns += totalBallRuns;
+          bowlerEntry.currentOverBalls++;
+        }
+
+        if (ball.wicketType && ball.wicketType !== 'run_out') {
+          bowlerEntry.wickets++;
+        }
+      }
+
+      // Final check for last over maiden
+      bowlingMap.forEach((bowlerEntry) => {
+        if (bowlerEntry.currentOverRuns === 0 && bowlerEntry.currentOverBalls === 6) {
+          bowlerEntry.maidens++;
+        }
+      });
+
+      const bowlingScorecard = Array.from(bowlingMap.values()).map((b) => ({
+        playerId: b.playerId,
+        playerName: b.playerName,
+        overs: toOversNotation(b.ballsFaced),
+        oversDisplay: `${Math.floor(b.ballsFaced / 6)}.${b.ballsFaced % 6}`,
+        wickets: b.wickets,
+        runsConceded: b.runsConceded,
+        maidens: b.maidens,
+        noBalls: b.noBalls,
+        wides: b.wides,
+        economy: b.ballsFaced > 0 ? parseFloat((b.runsConceded / (b.ballsFaced / 6)).toFixed(2)) : 0,
+      }));
+
+      // Dismissed player IDs for this innings
+      const dismissedPlayerIds = battingScorecard
+        .filter((b) => b.dismissed)
+        .map((b) => b.playerId);
+
+      return {
+        inningsNumber: innings.inningsNumber,
+        battingTeam: innings.battingTeam,
+        bowlingTeam: innings.bowlingTeam,
+        battingScorecard,
+        bowlingScorecard,
+        dismissedPlayerIds,
+      };
+    })
+  );
+
+  return { matchId, performances: performanceData };
 }
 
 export async function getOverDetails(matchId: string, overNumber: number) {

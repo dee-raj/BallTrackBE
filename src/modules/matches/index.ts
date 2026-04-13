@@ -69,6 +69,10 @@ router.get(
     '/:id/over/:overNumber',
     matchesController.getOver.bind(matchesController)
 );
+router.get(
+    '/:id/performance',
+    matchesController.getPerformance.bind(matchesController)
+);
 
 router.delete(
     '/:id',

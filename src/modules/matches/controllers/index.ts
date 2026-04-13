@@ -11,6 +11,7 @@ import {
   getMatchScoreboard,
   getInningsScoreboard,
   getOverDetails,
+  getMatchPerformance,
 } from '../services';
 import {
   createMatchSchema,
@@ -126,6 +127,15 @@ export class MatchesController {
       const overNumber = parseInt(req.params.overNumber);
       const over = await getOverDetails(req.params.id, overNumber);
       res.json(over);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getPerformance(req: Request, res: Response, next: NextFunction) {
+    try {
+      const performance = await getMatchPerformance(req.params.id);
+      res.json(performance);
     } catch (error) {
       next(error);
     }
