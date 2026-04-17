@@ -44,7 +44,7 @@ function getRunRate(totalRuns: number, legalBalls: number): number {
   return parseFloat((totalRuns / (legalBalls / 6)).toFixed(2));
 }
 
-async function recomputeInnings(db: DbClient, inningsId: string): Promise<void> {
+async function recomputeInnings(db: DbClient, inningsId: string, maxWickets: number = 10): Promise<void> {
   const balls = await db.ball.findMany({
     where: { inningsId },
     orderBy: { sequenceNo: 'asc' },
@@ -76,7 +76,7 @@ async function recomputeInnings(db: DbClient, inningsId: string): Promise<void> 
       totalExtras,
       legalBalls,
       oversBowled: toOversNotation(legalBalls),
-      allOut: totalWickets >= 10,
+      allOut: totalWickets >= maxWickets,
     },
   });
 }
@@ -104,9 +104,10 @@ function getChaseResult(
   const defendingScore = target - 1;
 
   if (innings.totalRuns > defendingScore) {
+    const maxWickets = innings.targetWickets || 10;
     return {
       winnerTeamId: innings.battingTeamId,
-      resultMargin: `${10 - innings.totalWickets} wickets`,
+      resultMargin: `${maxWickets - innings.totalWickets} wickets`,
     };
   }
 
@@ -150,19 +151,37 @@ export async function createMatch(data: CreateMatchDto, userId: string) {
     throw new ValidationError('Home and away teams must be different');
   }
 
+  if (data.tournamentId) {
+    const tournamentTeams = await prisma.tournamentTeam.findMany({
+      where: { tournamentId: data.tournamentId },
+      select: { teamId: true },
+    });
+    const teamIds = tournamentTeams.map((t) => t.teamId);
+
+    if (!teamIds.includes(data.homeTeamId)) {
+      throw new ValidationError('Home team is not part of this tournament');
+    }
+    if (!teamIds.includes(data.awayTeamId)) {
+      throw new ValidationError('Away team is not part of this tournament');
+    }
+  }
+
   return prisma.match.create({
     data: {
       matchDate: new Date(data.matchDate),
       scheduledStartTime: data.scheduledStartTime ? new Date(data.scheduledStartTime) : undefined,
       venue: data.venue,
       overs: data.overs,
+      playersPerSide: data.playersPerSide,
       createdById: userId,
       scorerId: userId,
       homeTeamId: data.homeTeamId,
       awayTeamId: data.awayTeamId,
+      tournamentId: data.tournamentId,
     },
   });
 }
+
 
 export async function getMatchById(id: string) {
   const match = await prisma.match.findUnique({
@@ -187,10 +206,28 @@ export async function getMatchById(id: string) {
 
 export async function getAllMatches() {
   return prisma.match.findMany({
-    include: { homeTeam: true, awayTeam: true },
+    include: {
+      homeTeam: true,
+      awayTeam: true,
+      winnerTeam: true,
+      innings: {
+
+        select: {
+          inningsNumber: true,
+          totalRuns: true,
+          totalWickets: true,
+          oversBowled: true,
+          battingTeamId: true,
+          status: true
+
+        },
+        orderBy: { inningsNumber: 'asc' }
+      }
+    },
     orderBy: { matchDate: 'desc' },
   });
 }
+
 
 export async function recordToss(data: TossDto) {
   const match = await prisma.match.findUnique({ where: { id: data.matchId } });
@@ -225,7 +262,7 @@ export async function startInnings(data: StartInningsDto) {
 
     if (data.inningsNumber === 2) {
       inningsData.targetRuns = await getSecondInningsTarget(tx, data.matchId);
-      inningsData.targetWickets = 10;
+      inningsData.targetWickets = (match?.playersPerSide || 11) - 1;
     }
 
     const createdInnings = await tx.innings.create({
@@ -290,7 +327,8 @@ export async function recordBall(data: BallInputDto) {
       throw new ValidationError('Innings is not in progress');
     }
 
-    if (innings.totalWickets >= 10) {
+    const maxWickets = (match?.playersPerSide || 11) - 1;
+    if (innings.totalWickets >= maxWickets) {
       throw new ConflictError('All wickets already fell');
     }
 
@@ -344,12 +382,13 @@ export async function recordBall(data: BallInputDto) {
       },
     });
 
-    await recomputeInnings(tx, data.inningsId);
+    await recomputeInnings(tx, data.inningsId, (match?.playersPerSide || 11) - 1);
 
     let updatedInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
     if (!updatedInnings) throw new NotFoundError('Innings not found');
 
-    const allOut = updatedInnings.totalWickets >= 10;
+    const allOut = updatedInnings.totalWickets >= maxWickets;
+
     const targetReached = updatedInnings.targetRuns !== null && updatedInnings.totalRuns >= updatedInnings.targetRuns;
     const oversComplete = updatedInnings.legalBalls >= match.overs * 6;
 
@@ -446,7 +485,7 @@ export async function undoLastBall(matchId: string) {
     if (!lastBall) throw new ValidationError('No balls to undo');
 
     await tx.ball.delete({ where: { id: lastBall.id } });
-    await recomputeInnings(tx, innings.id);
+    await recomputeInnings(tx, innings.id, (match?.playersPerSide || 11) - 1);
 
     const updatedInnings = await tx.innings.findUnique({ where: { id: innings.id } });
     await tx.match.update({
@@ -534,7 +573,9 @@ export async function getMatchScoreboard(matchId: string) {
     include: {
       homeTeam: true,
       awayTeam: true,
+      winnerTeam: true,
       innings: {
+
         include: {
           battingTeam: true,
           bowlingTeam: true,
@@ -551,11 +592,12 @@ export async function getMatchScoreboard(matchId: string) {
 
   let result: string | undefined;
   if (match.matchStatus === 'completed' && match.winnerTeamId) {
-    const winner = match.homeTeamId === match.winnerTeamId ? match.homeTeam : match.awayTeam;
-    result = `${winner?.name} won`;
+    const winner = match.winnerTeam || (match.homeTeamId === match.winnerTeamId ? match.homeTeam : match.awayTeam);
+    result = `${winner?.name} won ${match.resultMargin ? `by ${match.resultMargin}` : ''}`;
   } else if (match.matchStatus === 'completed' && match.resultMargin === 'Tie') {
     result = 'Match tied';
   }
+
 
   return {
     id: match.id,

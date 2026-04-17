@@ -12,7 +12,17 @@ const envSchema = z.object({
   CLOUDINARY_API_SECRET: z.string(),
 });
 
-const env = envSchema.parse(process.env);
+const parsedEnv = envSchema.safeParse(process.env);
+
+if (!parsedEnv.success) {
+  console.error('Missing or invalid required environment variables:');
+  parsedEnv.error.issues.forEach((issue) => {
+    console.error(`  - ${issue.path.join('.')}: ${issue.message}`);
+  });
+  process.exit(1);
+}
+
+const env = parsedEnv.data;
 
 export const config = {
   port: env.PORT,

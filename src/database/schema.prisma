@@ -64,6 +64,13 @@ enum OverSetComplete {
   not_applicable
 }
 
+enum TournamentType {
+  league
+  knockout
+  series
+}
+
+
 // ============================================
 // MODELS
 // ============================================
@@ -73,6 +80,7 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   fullName     String   @map("full_name")
+  photoUrl     String?  @map("photo_url")
   role         UserRole @default(scorer)
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
@@ -81,6 +89,8 @@ model User {
   createdTeams   Team[]
   createdMatches Match[] @relation("MatchCreator")
   scoredMatches  Match[] @relation("MatchScorer")
+  tournaments    Tournament[]
+
 
   @@index([email])
   @@map("users")
@@ -124,8 +134,10 @@ model Team {
   awayMatches   Match[]      @relation("AwayTeam")
   inningBatting Innings[]    @relation("InningsBattingTeam")
   inningBowling Innings[]    @relation("InningsBowlingTeam")
-  matchesWon    Match[]      @relation("MatchWinner")
-  matchesTossed Match[]      @relation("TossWinner")
+  matchesWon    Match[]          @relation("MatchWinner")
+  matchesTossed Match[]          @relation("TossWinner")
+  tournaments   TournamentTeam[]
+
 
   @@index([name])
   @@index([createdById])
@@ -154,7 +166,9 @@ model Match {
   scheduledStartTime DateTime?     @map("scheduled_start_time")
   venue              String?
   overs              Int           @default(50)
+  playersPerSide     Int           @default(11) @map("players_per_side")
   matchStatus        MatchStatus   @default(scheduled) @map("match_status")
+
   tossWinnerId       String?       @map("toss_winner_id")
   tossDecision       TossDecision? @map("toss_decision")
   firstInningsId     String?       @map("first_innings_id")
@@ -165,6 +179,8 @@ model Match {
   scorerId           String        @map("scorer_id")
   homeTeamId         String        @map("home_team_id")
   awayTeamId         String        @map("away_team_id")
+  tournamentId       String?       @map("tournament_id")
+
   version            Int           @default(1)
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
@@ -175,7 +191,9 @@ model Match {
   scorer     User      @relation("MatchScorer", fields: [scorerId], references: [id])
   homeTeam   Team      @relation("HomeTeam", fields: [homeTeamId], references: [id])
   awayTeam   Team      @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  tournament Tournament? @relation(fields: [tournamentId], references: [id])
   innings    Innings[]
+
 
   @@index([matchDate])
   @@index([createdById])
@@ -244,3 +262,38 @@ model Ball {
   @@index([sequenceNo])
   @@map("balls")
 }
+
+model Tournament {
+  id                String         @id @default(uuid())
+  name              String
+  description       String?
+  startDate         DateTime?      @map("start_date")
+  endDate           DateTime?      @map("end_date")
+  type              TournamentType @default(league)
+  pointsPerWin      Int            @default(2) @map("points_per_win")
+  pointsPerLoss     Int            @default(0) @map("points_per_loss")
+  pointsPerDraw     Int            @default(1) @map("points_per_draw")
+  pointsPerNoResult Int            @default(1) @map("points_per_no_result")
+  createdById       String         @map("created_by_id")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  createdBy User             @relation(fields: [createdById], references: [id])
+  teams     TournamentTeam[]
+  matches   Match[]
+
+  @@map("tournaments")
+}
+
+model TournamentTeam {
+  id           String @id @default(uuid())
+  tournamentId String @map("tournament_id")
+  teamId       String @map("team_id")
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, teamId])
+  @@map("tournament_teams")
+}
+

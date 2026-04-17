@@ -23,6 +23,7 @@ import {
 } from '../dto';
 import { validateBody } from '../../../middlewares/validate';
 import prisma from '../../../database';
+import { ValidationError } from '../../../middlewares/error_handler';
 
 export class MatchesController {
   async getAll(_req: Request, res: Response, next: NextFunction) {
@@ -115,6 +116,9 @@ export class MatchesController {
   async getInningsScoreboard(req: Request, res: Response, next: NextFunction) {
     try {
       const inningsNumber = parseInt(req.params.number);
+      if (isNaN(inningsNumber) || inningsNumber < 1) {
+        throw new ValidationError('Invalid innings number');
+      }
       const scoreboard = await getInningsScoreboard(req.params.id, inningsNumber);
       res.json(scoreboard);
     } catch (error) {
@@ -125,6 +129,9 @@ export class MatchesController {
   async getOver(req: Request, res: Response, next: NextFunction) {
     try {
       const overNumber = parseInt(req.params.overNumber);
+      if (isNaN(overNumber) || overNumber < 1) {
+        throw new ValidationError('Invalid over number');
+      }
       const over = await getOverDetails(req.params.id, overNumber);
       res.json(over);
     } catch (error) {

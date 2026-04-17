@@ -6,7 +6,9 @@ import usersRoutes from './modules/users';
 import playersRoutes from './modules/players';
 import teamsRoutes from './modules/teams';
 import matchesRoutes from './modules/matches';
+import tournamentRoutes from './modules/tournaments';
 import uploadRoutes from './modules/uploads';
+
 
 const app = express();
 
@@ -29,7 +31,9 @@ app.use('/api/users', usersRoutes);
 app.use('/api/players', playersRoutes);
 app.use('/api/teams', teamsRoutes);
 app.use('/api/matches', matchesRoutes);
+app.use('/api/tournaments', tournamentRoutes);
 app.use('/api/uploads', uploadRoutes);
+
 
 app.use(notFound);
 app.use(errorHandler);

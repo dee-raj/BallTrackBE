@@ -38,6 +38,7 @@ export async function authenticate(
 
     (req as any).user = user;
     next();
+
   } catch (error) {
     if (error instanceof JsonWebTokenError) {
       next(new UnauthorizedError('Invalid token'));

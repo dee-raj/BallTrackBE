@@ -3,11 +3,15 @@ import { z } from 'zod';
 export const createMatchSchema = z.object({
   homeTeamId: z.string().uuid(),
   awayTeamId: z.string().uuid(),
+  tournamentId: z.string().uuid().optional(),
   matchDate: z.string().datetime(),
   scheduledStartTime: z.string().datetime().optional(),
   venue: z.string().max(255).optional(),
   overs: z.number().int().min(1).max(50).default(50),
+  playersPerSide: z.number().int().min(2).max(11).default(11),
 });
+
+
 
 export type CreateMatchDto = z.infer<typeof createMatchSchema>;
 

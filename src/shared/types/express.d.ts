@@ -1,11 +1,10 @@
 import { SafeUser } from '../user';
 
-declare global {
-  module Express {
-    interface Request {
-      user?: SafeUser;
-    }
+declare module 'express-serve-static-core' {
+  interface Request {
+    user?: SafeUser;
   }
 }
+
 
 export { };

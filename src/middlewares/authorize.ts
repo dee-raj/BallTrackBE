@@ -8,7 +8,7 @@ export function authorize(allowedRoles: Role) {
   const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
 
   return (req: Request, _res: Response, next: NextFunction): void => {
-    const user = (req as any).user as any;
+    const user = (req as any).user;
     if (!user) {
       next(new ForbiddenError('No user authenticated'));
       return;

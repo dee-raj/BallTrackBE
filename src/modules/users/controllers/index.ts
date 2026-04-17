@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { usersService } from '../services';
-import { updateProfileSchema } from '../dto';
+import { updateProfileSchema, changePasswordSchema } from '../dto';
 import { validateBody } from '../../../middlewares/validate';
 
 export class UsersController {
@@ -25,6 +25,17 @@ export class UsersController {
     }
   }
 
+  async changePassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const payload = (req as any).user as any;
+      const data = changePasswordSchema.parse(req.body);
+      const result = await usersService.changePassword(payload.id, data);
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getAllUsers(_req: Request, res: Response, next: NextFunction) {
     try {
       const users = await usersService.getAllUsers();
@@ -37,3 +48,4 @@ export class UsersController {
 
 export const usersController = new UsersController();
 export const updateProfileValidation = validateBody(updateProfileSchema);
+export const changePasswordValidation = validateBody(changePasswordSchema);
