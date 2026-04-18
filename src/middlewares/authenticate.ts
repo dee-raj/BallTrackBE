@@ -4,11 +4,13 @@ import { config } from '../config';
 import prisma from '../database';
 import { UnauthorizedError } from './error_handler';
 import { safeUserSelect } from '../shared/user';
+import { UserRole } from '../shared/constants';
 
 export interface JwtPayload {
   userId: string;
   email: string;
   role: string;
+  tenantId?: string | null; // null/undefined for superadmin
 }
 
 export async function authenticate(
@@ -24,11 +26,17 @@ export async function authenticate(
     }
 
     const token = authHeader.substring(7);
-
     const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
 
+    const isSuperAdmin = decoded.role === UserRole.superadmin;
+
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
+      where: {
+        id: decoded.userId,
+        // For superadmin, tenantId is null — skip cross-tenant guard
+        // For regular users, enforce tenantId match to prevent token reuse across tenants
+        ...(isSuperAdmin ? {} : { tenantId: decoded.tenantId ?? undefined }),
+      },
       select: safeUserSelect,
     });
 

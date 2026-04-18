@@ -2,22 +2,23 @@ import prisma from '../../../database';
 import { Team } from '@prisma/client';
 
 export class TeamsRepository {
-  async findById(id: string): Promise<Team | null> {
-    return prisma.team.findUnique({
-      where: { id },
+  async findById(id: string, tenantId: string): Promise<Team | null> {
+    return prisma.team.findFirst({
+      where: { id, tenantId },
       include: { teamPlayers: { include: { player: true } } },
     });
   }
 
-  async findAll(): Promise<Team[]> {
+  async findAll(tenantId: string): Promise<Team[]> {
     return prisma.team.findMany({
+      where: { tenantId },
       orderBy: { name: 'asc' },
     });
   }
 
-  async findByName(name: string): Promise<Team | null> {
+  async findByName(name: string, tenantId: string): Promise<Team | null> {
     return prisma.team.findFirst({
-      where: { name: { equals: name, mode: 'insensitive' } },
+      where: { name: { equals: name, mode: 'insensitive' }, tenantId },
     });
   }
 
@@ -27,6 +28,7 @@ export class TeamsRepository {
     homeGround?: string;
     logoUrl?: string;
     createdById: string;
+    tenantId: string;
   }): Promise<Team> {
     return prisma.team.create({
       data,

@@ -2,21 +2,22 @@ import prisma from '../../../database';
 import { Player, TeamPlayer } from '@prisma/client';
 
 export class PlayersRepository {
-  async findById(id: string): Promise<Player | null> {
-    return prisma.player.findUnique({
-      where: { id },
+  async findById(id: string, tenantId: string): Promise<Player | null> {
+    return prisma.player.findFirst({
+      where: { id, tenantId },
     });
   }
 
-  async findAll(): Promise<Player[]> {
+  async findAll(tenantId: string): Promise<Player[]> {
     return prisma.player.findMany({
+      where: { tenantId },
       orderBy: { fullName: 'asc' },
     });
   }
 
-  async findByEmail(email: string): Promise<Player | null> {
-    return prisma.player.findUnique({
-      where: { email },
+  async findByEmail(email: string, tenantId: string): Promise<Player | null> {
+    return prisma.player.findFirst({
+      where: { email, tenantId },
     });
   }
 
@@ -26,6 +27,7 @@ export class PlayersRepository {
     email?: string;
     photoUrl?: string;
     dateOfBirth?: Date;
+    tenantId: string;
   }): Promise<Player> {
     return prisma.player.create({
       data,

@@ -13,8 +13,9 @@ export class UsersService {
     return user;
   }
 
-  async getAllUsers() {
-    return usersRepository.findAll();
+  /** Returns all users within the same tenant. Admins use this to list their scorers. */
+  async getAllUsers(tenantId: string) {
+    return usersRepository.findAll(tenantId);
   }
 
   async updateProfile(userId: string, data: UpdateProfileDto) {
@@ -23,7 +24,7 @@ export class UsersService {
       throw new NotFoundError('User not found');
     }
 
-    const updateData: { fullName?: string, email?: string, photoUrl?: string } = {};
+    const updateData: { fullName?: string; email?: string; photoUrl?: string } = {};
 
     if (data.fullName) {
       updateData.fullName = data.fullName.trim();
@@ -38,7 +39,7 @@ export class UsersService {
     }
 
     if (data.photoUrl !== undefined) {
-      updateData.photoUrl = data.photoUrl ? data.photoUrl.trim() : null as any;
+      updateData.photoUrl = data.photoUrl ? data.photoUrl.trim() : (null as any);
     }
 
     return usersRepository.update(userId, updateData);
@@ -59,6 +60,29 @@ export class UsersService {
     await usersRepository.updatePassword(userId, passwordHash);
 
     return { message: 'Password updated successfully' };
+  }
+
+  /**
+   * Admin invites a scorer into their own tenant.
+   * The new user is automatically assigned the caller's tenantId.
+   */
+  async inviteUser(
+    data: { email: string; fullName: string; password: string; role: 'scorer' },
+    tenantId: string
+  ) {
+    const existing = await usersRepository.findByEmail(data.email);
+    if (existing) {
+      throw new ConflictError('Email already registered');
+    }
+
+    const passwordHash = await bcrypt.hash(data.password, config.bcrypt.rounds);
+    return usersRepository.create({
+      email: data.email,
+      fullName: data.fullName,
+      passwordHash,
+      role: data.role,
+      tenantId,
+    });
   }
 }
 

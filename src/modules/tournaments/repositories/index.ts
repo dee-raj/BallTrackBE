@@ -1,10 +1,10 @@
 import prisma from '../../../database';
-import { Tournament, TournamentTeam, TournamentType } from '@prisma/client';
+import { Tournament, TournamentType } from '@prisma/client';
 
 export class TournamentRepository {
-  async findById(id: string) {
-    return prisma.tournament.findUnique({
-      where: { id },
+  async findById(id: string, tenantId: string) {
+    return prisma.tournament.findFirst({
+      where: { id, tenantId },
       include: {
         teams: {
           include: {
@@ -17,15 +17,15 @@ export class TournamentRepository {
             awayTeam: true,
             winnerTeam: true,
             innings: true,
-
           },
         },
       },
     });
   }
 
-  async findAll() {
+  async findAll(tenantId: string) {
     return prisma.tournament.findMany({
+      where: { tenantId },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -41,6 +41,7 @@ export class TournamentRepository {
     pointsPerDraw: number;
     pointsPerNoResult: number;
     createdById: string;
+    tenantId: string;
   }): Promise<Tournament> {
     return prisma.tournament.create({
       data,

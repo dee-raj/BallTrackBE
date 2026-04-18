@@ -9,8 +9,10 @@ export class UsersRepository {
     });
   }
 
-  async findAll(): Promise<SafeUser[]> {
+  /** Returns only users within the same tenant (for admin listing their scorers) */
+  async findAll(tenantId: string): Promise<SafeUser[]> {
     return prisma.user.findMany({
+      where: { tenantId },
       select: safeUserSelect,
       orderBy: { createdAt: 'desc' },
     });
@@ -29,7 +31,10 @@ export class UsersRepository {
     });
   }
 
-  async update(id: string, data: { fullName?: string, email?: string, photoUrl?: string }): Promise<SafeUser> {
+  async update(
+    id: string,
+    data: { fullName?: string; email?: string; photoUrl?: string }
+  ): Promise<SafeUser> {
     return prisma.user.update({
       where: { id },
       data,
@@ -41,6 +46,20 @@ export class UsersRepository {
     await prisma.user.update({
       where: { id },
       data: { passwordHash },
+    });
+  }
+
+  /** Create a user within a tenant (used by admin invite flow) */
+  async create(data: {
+    email: string;
+    passwordHash: string;
+    fullName: string;
+    role: string;
+    tenantId: string;
+  }): Promise<SafeUser> {
+    return prisma.user.create({
+      data: data as any,
+      select: safeUserSelect,
     });
   }
 }

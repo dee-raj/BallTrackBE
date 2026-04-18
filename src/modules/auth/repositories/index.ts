@@ -12,9 +12,11 @@ export class AuthRepository {
     email: string;
     passwordHash: string;
     fullName: string;
+    role?: string;
+    tenantId?: string | null;
   }): Promise<User> {
     return prisma.user.create({
-      data,
+      data: data as any,
     });
   }
 

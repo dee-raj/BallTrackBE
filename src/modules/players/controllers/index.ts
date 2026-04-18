@@ -10,9 +10,10 @@ import { validateBody } from '../../../middlewares/validate';
 import { UserRole } from '../../../shared/constants';
 
 export class PlayersController {
-  async getAll(_req: Request, res: Response, next: NextFunction) {
+  async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const players = await playersService.getAll();
+      const { tenantId } = (req as any).user;
+      const players = await playersService.getAll(tenantId);
       res.json(players);
     } catch (error) {
       next(error);
@@ -21,7 +22,8 @@ export class PlayersController {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const player = await playersService.getById(req.params.id);
+      const { tenantId } = (req as any).user;
+      const player = await playersService.getById(req.params.id, tenantId);
       res.json(player);
     } catch (error) {
       next(error);
@@ -31,8 +33,8 @@ export class PlayersController {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const data = createPlayerSchema.parse(req.body);
-      const payload = (req as any).user as any;
-      const player = await playersService.create(data, (payload?.role || 'scorer') as UserRole);
+      const { role, tenantId } = (req as any).user;
+      const player = await playersService.create(data, role as UserRole, tenantId);
       res.status(201).json(player);
     } catch (error) {
       next(error);
@@ -42,7 +44,8 @@ export class PlayersController {
   async update(req: Request, res: Response, next: NextFunction) {
     try {
       const data = updatePlayerSchema.parse(req.body);
-      const player = await playersService.update(req.params.id, data);
+      const { tenantId } = (req as any).user;
+      const player = await playersService.update(req.params.id, data, tenantId);
       res.json(player);
     } catch (error) {
       next(error);
@@ -51,7 +54,8 @@ export class PlayersController {
 
   async delete(req: Request, res: Response, next: NextFunction) {
     try {
-      await playersService.delete(req.params.id);
+      const { tenantId } = (req as any).user;
+      await playersService.delete(req.params.id, tenantId);
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -61,7 +65,8 @@ export class PlayersController {
   async addToTeam(req: Request, res: Response, next: NextFunction) {
     try {
       const data = addPlayerToTeamSchema.parse(req.body);
-      const teamPlayer = await playersService.addToTeam(req.params.teamId, data);
+      const { tenantId } = (req as any).user;
+      const teamPlayer = await playersService.addToTeam(req.params.teamId, data, tenantId);
       res.status(201).json(teamPlayer);
     } catch (error) {
       next(error);

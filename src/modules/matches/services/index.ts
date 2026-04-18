@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { NotFoundError, ConflictError, ValidationError } from '../../../middlewares/error_handler';
+import { NotFoundError, ConflictError, ValidationError, ForbiddenError } from '../../../middlewares/error_handler';
 import prisma from '../../../database';
 import type {
   CreateMatchDto,
@@ -37,11 +37,20 @@ function toOversNotation(legalBalls: number): number {
 }
 
 function getRunRate(totalRuns: number, legalBalls: number): number {
-  if (legalBalls === 0) {
-    return 0;
-  }
-
+  if (legalBalls === 0) return 0;
   return parseFloat((totalRuns / (legalBalls / 6)).toFixed(2));
+}
+
+/** Asserts a match belongs to the given tenant. Throws ForbiddenError otherwise. */
+async function assertMatchTenant(
+  db: DbClient,
+  matchId: string,
+  tenantId: string
+) {
+  const match = await db.match.findUnique({ where: { id: matchId } });
+  if (!match) throw new NotFoundError('Match not found');
+  if (match.tenantId !== tenantId) throw new ForbiddenError('Access denied');
+  return match;
 }
 
 async function recomputeInnings(db: DbClient, inningsId: string, maxWickets: number = 10): Promise<void> {
@@ -58,14 +67,8 @@ async function recomputeInnings(db: DbClient, inningsId: string, maxWickets: num
   for (const ball of balls) {
     totalRuns += ball.runsScored + ball.extras;
     totalExtras += ball.extras;
-
-    if (ball.wicketType) {
-      totalWickets++;
-    }
-
-    if (isLegalDelivery(ball.ballType)) {
-      legalBalls++;
-    }
+    if (ball.wicketType) totalWickets++;
+    if (isLegalDelivery(ball.ballType)) legalBalls++;
   }
 
   await db.innings.update({
@@ -97,9 +100,7 @@ function getChaseResult(
   innings: NonNullable<RecordBallTransactionResult['innings']>
 ): { winnerTeamId?: string; resultMargin: string } {
   const target = innings.targetRuns;
-  if (!target) {
-    throw new ValidationError('Second innings target is missing');
-  }
+  if (!target) throw new ValidationError('Second innings target is missing');
 
   const defendingScore = target - 1;
 
@@ -146,7 +147,9 @@ export class ScoringEngine {
 
 const scoringEngine = new ScoringEngine();
 
-export async function createMatch(data: CreateMatchDto, userId: string) {
+// ─── Public API ────────────────────────────────────────────────────────────────
+
+export async function createMatch(data: CreateMatchDto, userId: string, tenantId: string) {
   if (data.homeTeamId === data.awayTeamId) {
     throw new ValidationError('Home and away teams must be different');
   }
@@ -168,6 +171,7 @@ export async function createMatch(data: CreateMatchDto, userId: string) {
 
   return prisma.match.create({
     data: {
+      tenantId,
       matchDate: new Date(data.matchDate),
       scheduledStartTime: data.scheduledStartTime ? new Date(data.scheduledStartTime) : undefined,
       venue: data.venue,
@@ -182,10 +186,9 @@ export async function createMatch(data: CreateMatchDto, userId: string) {
   });
 }
 
-
-export async function getMatchById(id: string) {
-  const match = await prisma.match.findUnique({
-    where: { id },
+export async function getMatchById(id: string, tenantId: string) {
+  const match = await prisma.match.findFirst({
+    where: { id, tenantId },
     include: {
       homeTeam: true,
       awayTeam: true,
@@ -204,33 +207,31 @@ export async function getMatchById(id: string) {
   return match;
 }
 
-export async function getAllMatches() {
+export async function getAllMatches(tenantId: string) {
   return prisma.match.findMany({
+    where: { tenantId },
     include: {
       homeTeam: true,
       awayTeam: true,
       winnerTeam: true,
       innings: {
-
         select: {
           inningsNumber: true,
           totalRuns: true,
           totalWickets: true,
           oversBowled: true,
           battingTeamId: true,
-          status: true
-
+          status: true,
         },
-        orderBy: { inningsNumber: 'asc' }
-      }
+        orderBy: { inningsNumber: 'asc' },
+      },
     },
     orderBy: { matchDate: 'desc' },
   });
 }
 
-
-export async function recordToss(data: TossDto) {
-  const match = await prisma.match.findUnique({ where: { id: data.matchId } });
+export async function recordToss(data: TossDto, tenantId: string) {
+  const match = await prisma.match.findFirst({ where: { id: data.matchId, tenantId } });
   if (!match) throw new NotFoundError('Match not found');
   if (match.matchStatus !== 'scheduled') {
     throw new ValidationError('Toss already recorded');
@@ -242,8 +243,8 @@ export async function recordToss(data: TossDto) {
   });
 }
 
-export async function startInnings(data: StartInningsDto) {
-  const match = await prisma.match.findUnique({ where: { id: data.matchId } });
+export async function startInnings(data: StartInningsDto, tenantId: string) {
+  const match = await prisma.match.findFirst({ where: { id: data.matchId, tenantId } });
   if (!match) throw new NotFoundError('Match not found');
 
   const existing = await prisma.innings.findFirst({
@@ -265,9 +266,7 @@ export async function startInnings(data: StartInningsDto) {
       inningsData.targetWickets = (match?.playersPerSide || 11) - 1;
     }
 
-    const createdInnings = await tx.innings.create({
-      data: inningsData,
-    });
+    const createdInnings = await tx.innings.create({ data: inningsData });
 
     const status = data.inningsNumber === 1 ? 'in_progress' : 'second_innings';
     const inningsIdField = data.inningsNumber === 1 ? 'firstInningsId' : 'secondInningsId';
@@ -283,10 +282,11 @@ export async function startInnings(data: StartInningsDto) {
   return innings;
 }
 
-export async function recordBall(data: BallInputDto) {
+export async function recordBall(data: BallInputDto, tenantId: string) {
   const result = await prisma.$transaction<RecordBallTransactionResult>(async (tx) => {
     const match = await tx.match.findUnique({ where: { id: data.matchId } });
     if (!match) throw new NotFoundError('Match not found');
+    if (match.tenantId !== tenantId) throw new ForbiddenError('Access denied');
 
     if (match.matchStatus !== 'in_progress' && match.matchStatus !== 'second_innings') {
       throw new ValidationError('Match is not in progress');
@@ -328,10 +328,7 @@ export async function recordBall(data: BallInputDto) {
     }
 
     const maxWickets = (match?.playersPerSide || 11) - 1;
-    if (innings.totalWickets >= maxWickets) {
-      throw new ConflictError('All wickets already fell');
-    }
-
+    if (innings.totalWickets >= maxWickets) throw new ConflictError('All wickets already fell');
     if (innings.targetRuns && innings.totalRuns >= innings.targetRuns) {
       throw new ConflictError('Target already reached');
     }
@@ -388,7 +385,6 @@ export async function recordBall(data: BallInputDto) {
     if (!updatedInnings) throw new NotFoundError('Innings not found');
 
     const allOut = updatedInnings.totalWickets >= maxWickets;
-
     const targetReached = updatedInnings.targetRuns !== null && updatedInnings.totalRuns >= updatedInnings.targetRuns;
     const oversComplete = updatedInnings.legalBalls >= match.overs * 6;
 
@@ -398,11 +394,7 @@ export async function recordBall(data: BallInputDto) {
     if (innings.inningsNumber === 1 && (allOut || oversComplete)) {
       updatedInnings = await tx.innings.update({
         where: { id: data.inningsId },
-        data: {
-          status: 'completed',
-          targetRuns: updatedInnings.totalRuns + 1,
-          allOut,
-        },
+        data: { status: 'completed', targetRuns: updatedInnings.totalRuns + 1, allOut },
       });
       matchUpdate.matchStatus = 'tea_break';
       inningsEndReason = allOut ? 'all_out' : 'overs_complete';
@@ -433,42 +425,24 @@ export async function recordBall(data: BallInputDto) {
     const finalMatch = await tx.match.findUnique({ where: { id: data.matchId } });
     const finalInnings = await tx.innings.findUnique({ where: { id: data.inningsId } });
 
-    return {
-      ball,
-      innings: finalInnings,
-      match: finalMatch,
-      overNumber,
-      emitOverEnd,
-      inningsEndReason,
-    };
+    return { ball, innings: finalInnings, match: finalMatch, overNumber, emitOverEnd, inningsEndReason };
   });
 
   if (result.inningsEndReason && result.innings && result.match) {
-    emitInningsEnd(data.matchId, {
-      innings: result.innings,
-      match: result.match,
-      reason: result.inningsEndReason,
-    });
+    emitInningsEnd(data.matchId, { innings: result.innings, match: result.match, reason: result.inningsEndReason });
   }
-
   if (result.emitOverEnd && result.innings) {
-    emitOverComplete(data.matchId, {
-      overNumber: result.overNumber,
-      innings: result.innings,
-    });
+    emitOverComplete(data.matchId, { overNumber: result.overNumber, innings: result.innings });
   }
-
-  emitBallAdded(data.matchId, {
-    ball: result.ball,
-    innings: result.innings,
-    match: result.match,
-  });
+  emitBallAdded(data.matchId, { ball: result.ball, innings: result.innings, match: result.match });
 
   return result.ball;
 }
 
-export async function undoLastBall(matchId: string) {
+export async function undoLastBall(matchId: string, tenantId: string) {
   const result = await prisma.$transaction(async (tx) => {
+    await assertMatchTenant(tx, matchId, tenantId);
+
     const match = await tx.match.findUnique({ where: { id: matchId } });
     if (!match) throw new NotFoundError('Match not found');
 
@@ -497,26 +471,19 @@ export async function undoLastBall(matchId: string) {
     });
 
     const updatedMatch = await tx.match.findUnique({ where: { id: matchId } });
-
-    return {
-      lastBall,
-      innings: updatedInnings,
-      match: updatedMatch,
-    };
+    return { lastBall, innings: updatedInnings, match: updatedMatch };
   });
 
-  emitBallRemoved(matchId, {
-    innings: result.innings,
-    match: result.match,
-  });
-
+  emitBallRemoved(matchId, { innings: result.innings, match: result.match });
   return result.lastBall;
 }
 
-export async function declareInnings(data: DeclareInningsDto) {
+export async function declareInnings(data: DeclareInningsDto, tenantId: string) {
   const result = await prisma.$transaction(async (tx) => {
     const innings = await tx.innings.findUnique({ where: { id: data.inningsId } });
     if (!innings) throw new NotFoundError('Innings not found');
+
+    await assertMatchTenant(tx, innings.matchId, tenantId);
 
     const match = await tx.match.findUnique({ where: { id: innings.matchId } });
     if (!match) throw new NotFoundError('Match not found');
@@ -531,10 +498,7 @@ export async function declareInnings(data: DeclareInningsDto) {
         where: { id: data.inningsId },
         data: { targetRuns: innings.totalRuns + 1 },
       });
-      await tx.match.update({
-        where: { id: match.id },
-        data: { matchStatus: 'tea_break' },
-      });
+      await tx.match.update({ where: { id: match.id }, data: { matchStatus: 'tea_break' } });
     } else {
       const chaseResult = getChaseResult(updatedInnings);
       await tx.match.update({
@@ -548,12 +512,7 @@ export async function declareInnings(data: DeclareInningsDto) {
     }
 
     const updatedMatch = await tx.match.findUnique({ where: { id: match.id } });
-
-    return {
-      innings: updatedInnings,
-      match: updatedMatch,
-      reason: 'declared' as const,
-    };
+    return { innings: updatedInnings, match: updatedMatch, reason: 'declared' as const };
   });
 
   if (result.match) {
@@ -567,21 +526,20 @@ export async function declareInnings(data: DeclareInningsDto) {
   return result.innings;
 }
 
-export async function getMatchScoreboard(matchId: string) {
-  const match = await prisma.match.findUnique({
-    where: { id: matchId },
+export async function getMatchScoreboard(matchId: string, tenantId: string) {
+  const match = await prisma.match.findFirst({
+    where: { id: matchId, tenantId },
     include: {
       homeTeam: true,
       awayTeam: true,
       winnerTeam: true,
       innings: {
-
         include: {
           battingTeam: true,
           bowlingTeam: true,
           balls: {
             orderBy: { sequenceNo: 'desc' },
-            take: 12, // Get last 12 balls to cover current over even if long + previous
+            take: 12,
           },
         },
         orderBy: { inningsNumber: 'asc' },
@@ -597,7 +555,6 @@ export async function getMatchScoreboard(matchId: string) {
   } else if (match.matchStatus === 'completed' && match.resultMargin === 'Tie') {
     result = 'Match tied';
   }
-
 
   return {
     id: match.id,
@@ -618,8 +575,8 @@ export async function getMatchScoreboard(matchId: string) {
   };
 }
 
-export async function getInningsScoreboard(matchId: string, inningsNumber: number) {
-  const match = await prisma.match.findUnique({ where: { id: matchId } });
+export async function getInningsScoreboard(matchId: string, inningsNumber: number, tenantId: string) {
+  const match = await prisma.match.findFirst({ where: { id: matchId, tenantId } });
   if (!match) throw new NotFoundError('Match not found');
 
   const innings = await prisma.innings.findFirst({
@@ -657,9 +614,29 @@ export async function getInningsScoreboard(matchId: string, inningsNumber: numbe
   };
 }
 
-export async function getMatchPerformance(matchId: string) {
-  const match = await prisma.match.findUnique({
-    where: { id: matchId },
+export async function getOverDetails(matchId: string, overNumber: number, tenantId: string) {
+  const match = await prisma.match.findFirst({ where: { id: matchId, tenantId } });
+  if (!match) throw new NotFoundError('Match not found');
+
+  const activeInnings = await prisma.innings.findFirst({
+    where: { matchId, status: 'in_progress' },
+    orderBy: { inningsNumber: 'desc' },
+  });
+  if (!activeInnings) throw new NotFoundError('No active innings');
+
+  return prisma.ball.findMany({
+    where: { inningsId: activeInnings.id, overNumber },
+    orderBy: { ballNumber: 'asc' },
+    include: {
+      batsman: { select: { id: true, fullName: true } },
+      bowler: { select: { id: true, fullName: true } },
+    },
+  });
+}
+
+export async function getMatchPerformance(matchId: string, tenantId: string) {
+  const match = await prisma.match.findFirst({
+    where: { id: matchId, tenantId },
     include: { homeTeam: true, awayTeam: true },
   });
   if (!match) throw new NotFoundError('Match not found');
@@ -686,48 +663,29 @@ export async function getMatchPerformance(matchId: string) {
 
       // --- Batting Scorecard ---
       const battingMap = new Map<string, {
-        playerId: string;
-        playerName: string;
-        runs: number;
-        balls: number;
-        fours: number;
-        sixes: number;
-        dotBalls: number;
-        dismissed: boolean;
-        wicketType?: string;
-        fielderName?: string;
-        bowlerName?: string;
-        battingOrder: number;
+        playerId: string; playerName: string; runs: number; balls: number;
+        fours: number; sixes: number; dotBalls: number; dismissed: boolean;
+        wicketType?: string; fielderName?: string; bowlerName?: string; battingOrder: number;
       }>();
 
       let battingOrderCounter = 0;
       const seenBatsmen = new Set<string>();
 
       for (const ball of balls) {
-        // Register batsman in order of first appearance
         for (const pid of [ball.batsmanPlayerId, ball.nonStrikerPlayerId]) {
           const pName = pid === ball.batsmanPlayerId ? ball.batsman.fullName : ball.nonStriker.fullName;
           if (!seenBatsmen.has(pid)) {
             seenBatsmen.add(pid);
             battingOrderCounter++;
             battingMap.set(pid, {
-              playerId: pid,
-              playerName: pName,
-              runs: 0,
-              balls: 0,
-              fours: 0,
-              sixes: 0,
-              dotBalls: 0,
-              dismissed: false,
-              battingOrder: battingOrderCounter,
+              playerId: pid, playerName: pName, runs: 0, balls: 0,
+              fours: 0, sixes: 0, dotBalls: 0, dismissed: false, battingOrder: battingOrderCounter,
             });
           }
         }
 
         const entry = battingMap.get(ball.batsmanPlayerId)!;
-        // Only count runs off bat for the batsman
         entry.runs += ball.runsScored;
-        // Count balls faced (legal deliveries to the batsman = all except wides)
         if (ball.ballType !== 'wide') {
           entry.balls++;
           if (ball.runsScored === 0 && !ball.wicketType) entry.dotBalls++;
@@ -735,7 +693,6 @@ export async function getMatchPerformance(matchId: string) {
         if (ball.runsScored === 4) entry.fours++;
         if (ball.runsScored === 6) entry.sixes++;
 
-        // Dismissal
         if (ball.wicketType && ball.wicketPlayerId) {
           const dismissedEntry = battingMap.get(ball.wicketPlayerId);
           if (dismissedEntry) {
@@ -747,133 +704,81 @@ export async function getMatchPerformance(matchId: string) {
         }
       }
 
-      const battingScorecard = Array.from(battingMap.values()).sort(
-        (a, b) => a.battingOrder - b.battingOrder
-      ).map((b) => ({
-        ...b,
-        strikeRate: b.balls > 0 ? parseFloat(((b.runs / b.balls) * 100).toFixed(1)) : 0,
-      }));
+      const battingScorecard = Array.from(battingMap.values())
+        .sort((a, b) => a.battingOrder - b.battingOrder)
+        .map((b) => ({
+          ...b,
+          strikeRate: b.balls > 0 ? parseFloat(((b.runs / b.balls) * 100).toFixed(1)) : 0,
+        }));
 
       // --- Bowling Scorecard ---
       const bowlingMap = new Map<string, {
-        playerId: string;
-        playerName: string;
-        ballsFaced: number; // legal deliveries only
-        runsConceded: number;
-        wickets: number;
-        maidens: number;
-        noBalls: number;
-        wides: number;
-        currentOverRuns: number;
-        currentOverBalls: number;
-        lastOverNumber: number;
+        playerId: string; playerName: string; ballsFaced: number; runsConceded: number;
+        wickets: number; maidens: number; noBalls: number; wides: number;
+        currentOverRuns: number; currentOverBalls: number; lastOverNumber: number;
       }>();
 
       for (const ball of balls) {
         if (!bowlingMap.has(ball.bowlerPlayerId)) {
           bowlingMap.set(ball.bowlerPlayerId, {
-            playerId: ball.bowlerPlayerId,
-            playerName: ball.bowler.fullName,
-            ballsFaced: 0,
-            runsConceded: 0,
-            wickets: 0,
-            maidens: 0,
-            noBalls: 0,
-            wides: 0,
-            currentOverRuns: 0,
-            currentOverBalls: 0,
+            playerId: ball.bowlerPlayerId, playerName: ball.bowler.fullName,
+            ballsFaced: 0, runsConceded: 0, wickets: 0, maidens: 0,
+            noBalls: 0, wides: 0, currentOverRuns: 0, currentOverBalls: 0,
             lastOverNumber: ball.overNumber,
           });
         }
         const bowlerEntry = bowlingMap.get(ball.bowlerPlayerId)!;
-
         const totalBallRuns = ball.runsScored + ball.extras;
         bowlerEntry.runsConceded += totalBallRuns;
-
         if (ball.ballType === 'no_ball') bowlerEntry.noBalls++;
         if (ball.ballType === 'wide') bowlerEntry.wides++;
 
         const isLegal = ball.ballType !== 'wide' && ball.ballType !== 'no_ball';
         if (isLegal) {
           bowlerEntry.ballsFaced++;
-          // Track maiden detection: check if over changed
           if (bowlerEntry.lastOverNumber !== ball.overNumber) {
-            // New over started for this bowler — check if previous over was maiden
-            if (bowlerEntry.currentOverRuns === 0 && bowlerEntry.currentOverBalls > 0) {
+            if (bowlerEntry.currentOverRuns === 0 && bowlerEntry.currentOverBalls === 6) {
               bowlerEntry.maidens++;
             }
             bowlerEntry.currentOverRuns = 0;
             bowlerEntry.currentOverBalls = 0;
-            bowlerEntry.lastOverNumber = ball.overNumber;
           }
           bowlerEntry.currentOverRuns += totalBallRuns;
           bowlerEntry.currentOverBalls++;
+          bowlerEntry.lastOverNumber = ball.overNumber;
         }
-
-        if (ball.wicketType && ball.wicketType !== 'run_out') {
-          bowlerEntry.wickets++;
-        }
+        if (ball.wicketType && ball.wicketType !== 'run_out') bowlerEntry.wickets++;
       }
-
-      // Final check for last over maiden
-      bowlingMap.forEach((bowlerEntry) => {
-        if (bowlerEntry.currentOverRuns === 0 && bowlerEntry.currentOverBalls === 6) {
-          bowlerEntry.maidens++;
-        }
-      });
 
       const bowlingScorecard = Array.from(bowlingMap.values()).map((b) => ({
         playerId: b.playerId,
         playerName: b.playerName,
         overs: toOversNotation(b.ballsFaced),
-        oversDisplay: `${Math.floor(b.ballsFaced / 6)}.${b.ballsFaced % 6}`,
-        wickets: b.wickets,
-        runsConceded: b.runsConceded,
         maidens: b.maidens,
+        runs: b.runsConceded,
+        wickets: b.wickets,
         noBalls: b.noBalls,
         wides: b.wides,
-        economy: b.ballsFaced > 0 ? parseFloat((b.runsConceded / (b.ballsFaced / 6)).toFixed(2)) : 0,
+        economy: b.ballsFaced > 0 ? parseFloat(((b.runsConceded / b.ballsFaced) * 6).toFixed(2)) : 0,
       }));
-
-      // Dismissed player IDs for this innings
-      const dismissedPlayerIds = battingScorecard
-        .filter((b) => b.dismissed)
-        .map((b) => b.playerId);
 
       return {
         inningsNumber: innings.inningsNumber,
         battingTeam: innings.battingTeam,
         bowlingTeam: innings.bowlingTeam,
+        totalRuns: innings.totalRuns,
+        totalWickets: innings.totalWickets,
+        oversBowled: innings.oversBowled,
         battingScorecard,
         bowlingScorecard,
-        dismissedPlayerIds,
       };
     })
   );
 
-  return { matchId, performances: performanceData };
-}
-
-export async function getOverDetails(matchId: string, overNumber: number) {
-  const innings = await prisma.innings.findFirst({
-    where: { matchId },
-    orderBy: { inningsNumber: 'desc' },
-  });
-  if (!innings) throw new NotFoundError('Innings not found');
-
-  const balls = await prisma.ball.findMany({
-    where: { inningsId: innings.id, overNumber },
-    orderBy: { sequenceNo: 'asc' },
-    include: {
-      batsman: true,
-      bowler: true,
-    },
-  });
-
-  if (balls.length === 0) throw new NotFoundError('Over not found');
-
-  const runs = balls.reduce((sum, b) => sum + b.runsScored + b.extras, 0);
-  const wickets = balls.filter((b) => b.wicketType).length;
-
-  return { overNumber, runs, wickets, balls };
+  return {
+    matchId: match.id,
+    homeTeam: match.homeTeam,
+    awayTeam: match.awayTeam,
+    innings: performanceData,
+  };
 }

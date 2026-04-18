@@ -4,20 +4,42 @@ import { config } from '../../../config';
 import { authRepository } from '../repositories';
 import { UnauthorizedError, ConflictError, ValidationError } from '../../../middlewares/error_handler';
 import type { LoginDto, RegisterDto, ResetPasswordDto } from '../dto';
+import prisma from '../../../database';
 
 export class AuthService {
+  /**
+   * Register a brand-new admin.
+   * Creates a Tenant from orgName, then creates the user as admin of that tenant.
+   */
   async register(data: RegisterDto) {
     const existingUser = await authRepository.findByEmail(data.email);
     if (existingUser) {
       throw new ConflictError('Email already registered');
     }
 
+    // Derive a unique slug from orgName + timestamp
+    const slug =
+      data.orgName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') +
+      '-' +
+      Date.now();
+
+    // Create the tenant first
+    const tenant = await prisma.tenant.create({
+      data: { name: data.orgName, slug },
+    });
+
     const passwordHash = await bcrypt.hash(data.password, config.bcrypt.rounds);
 
+    // First user of a tenant is always admin
     const user = await authRepository.create({
       email: data.email,
       passwordHash,
       fullName: data.fullName,
+      role: 'admin',
+      tenantId: tenant.id,
     });
 
     const token = this.generateToken(user);
@@ -28,6 +50,7 @@ export class AuthService {
         email: user.email,
         fullName: user.fullName,
         role: user.role,
+        tenantId: user.tenantId,
       },
       token,
     };
@@ -56,17 +79,26 @@ export class AuthService {
         email: user.email,
         fullName: user.fullName,
         role: user.role,
+        tenantId: user.tenantId,  // null for superadmin
       },
       token,
     };
   }
 
-  private generateToken(user: { id: string; email: string; role: string }): string {
-    const options: SignOptions = {
-      expiresIn: '7d',
-    };
+  private generateToken(user: {
+    id: string;
+    email: string;
+    role: string;
+    tenantId?: string | null;
+  }): string {
+    const options: SignOptions = { expiresIn: '7d' };
     return jwt.sign(
-      { userId: user.id, email: user.email, role: user.role },
+      {
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+        tenantId: user.tenantId ?? null,
+      },
       config.jwt.secret,
       options
     );
@@ -78,22 +110,19 @@ export class AuthService {
     }
     const user = await authRepository.findByEmail(data.email.trim().toLowerCase());
     if (!user) {
-      // Don't reveal if user exists for security, just say "If email exists..."
       return { message: 'If an account exists with this email, a reset code has been sent.' };
     }
 
-    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
     await authRepository.updateResetToken(data.email, otp, expiry);
 
-    // In a real app, send email here. For now, we'll return it in development
     console.log(`[AUTH] Password reset OTP for ${data.email}: ${otp}`);
 
     return {
       message: 'Password reset code sent to your email.',
-      debug_otp: config.nodeEnv === 'development' ? otp : undefined // Only return for testing
+      debug_otp: config.nodeEnv === 'development' ? otp : undefined,
     };
   }
 

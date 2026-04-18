@@ -3,20 +3,20 @@ import { ConflictError, NotFoundError } from '../../../middlewares/error_handler
 import type { CreateTeamDto, UpdateTeamDto } from '../dto';
 
 export class TeamsService {
-  async getAll() {
-    return teamsRepository.findAll();
+  async getAll(tenantId: string) {
+    return teamsRepository.findAll(tenantId);
   }
 
-  async getById(id: string) {
-    const team = await teamsRepository.findById(id);
+  async getById(id: string, tenantId: string) {
+    const team = await teamsRepository.findById(id, tenantId);
     if (!team) {
       throw new NotFoundError('Team not found');
     }
     return team;
   }
 
-  async create(data: CreateTeamDto, createdById: string) {
-    const existing = await teamsRepository.findByName(data.name);
+  async create(data: CreateTeamDto, createdById: string, tenantId: string) {
+    const existing = await teamsRepository.findByName(data.name, tenantId);
     if (existing) {
       throw new ConflictError('Team name already exists');
     }
@@ -27,17 +27,18 @@ export class TeamsService {
       homeGround: data.homeGround,
       logoUrl: data.logoUrl,
       createdById,
+      tenantId,
     });
   }
 
-  async update(id: string, data: UpdateTeamDto) {
-    const existingTeam = await teamsRepository.findById(id);
+  async update(id: string, data: UpdateTeamDto, tenantId: string) {
+    const existingTeam = await teamsRepository.findById(id, tenantId);
     if (!existingTeam) {
       throw new NotFoundError('Team not found');
     }
 
     if (data.name && data.name !== existingTeam.name) {
-      const nameTaken = await teamsRepository.findByName(data.name);
+      const nameTaken = await teamsRepository.findByName(data.name, tenantId);
       if (nameTaken) {
         throw new ConflictError('Team name already exists');
       }
@@ -51,9 +52,9 @@ export class TeamsService {
     });
   }
 
-  async delete(id: string) {
+  async delete(id: string, tenantId: string) {
     try {
-      const existing = await teamsRepository.findById(id);
+      const existing = await teamsRepository.findById(id, tenantId);
       if (!existing) {
         throw new NotFoundError('Team not found');
       }

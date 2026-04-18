@@ -6,13 +6,16 @@ import { UserRole } from '../../shared/constants';
 
 const router = Router();
 
+// All tournament reads require auth — tenantId scoping applied
 router.get(
   '/',
+  authenticate,
   tournamentController.getAll.bind(tournamentController)
 );
 
 router.get(
   '/:id',
+  authenticate,
   tournamentController.getById.bind(tournamentController)
 );
 
@@ -56,6 +59,7 @@ router.delete(
 
 router.get(
   '/:id/points-table',
+  authenticate,
   tournamentController.getPointsTable.bind(tournamentController)
 );
 

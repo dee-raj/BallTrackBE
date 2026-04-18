@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 
 export const safeUserSelect = Prisma.validator<Prisma.UserSelect>()({
   id: true,
+  tenantId: true,
   email: true,
   fullName: true,
   photoUrl: true,
@@ -14,4 +15,3 @@ export const safeUserSelect = Prisma.validator<Prisma.UserSelect>()({
 export type SafeUser = Prisma.UserGetPayload<{
   select: typeof safeUserSelect;
 }>;
-

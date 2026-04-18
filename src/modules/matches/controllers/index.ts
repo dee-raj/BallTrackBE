@@ -18,17 +18,17 @@ import {
   tossSchema,
   ballInputSchema,
   startInningsSchema,
-  updateMatchStatusSchema,
   declareInningsSchema,
 } from '../dto';
 import { validateBody } from '../../../middlewares/validate';
 import prisma from '../../../database';
-import { ValidationError } from '../../../middlewares/error_handler';
+import { ValidationError, ForbiddenError } from '../../../middlewares/error_handler';
 
 export class MatchesController {
-  async getAll(_req: Request, res: Response, next: NextFunction) {
+  async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const matches = await getAllMatches();
+      const { tenantId } = (req as any).user;
+      const matches = await getAllMatches(tenantId);
       res.json(matches);
     } catch (error) {
       next(error);
@@ -37,7 +37,8 @@ export class MatchesController {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const match = await getMatchById(req.params.id);
+      const { tenantId } = (req as any).user;
+      const match = await getMatchById(req.params.id, tenantId);
       res.json(match);
     } catch (error) {
       next(error);
@@ -47,8 +48,8 @@ export class MatchesController {
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const data = createMatchSchema.parse(req.body);
-      const payload = (req as any).user as any;
-      const match = await createMatch(data, payload?.id || '');
+      const { id: userId, tenantId } = (req as any).user;
+      const match = await createMatch(data, userId, tenantId);
       res.status(201).json(match);
     } catch (error) {
       next(error);
@@ -58,7 +59,8 @@ export class MatchesController {
   async recordToss(req: Request, res: Response, next: NextFunction) {
     try {
       const data = tossSchema.parse(req.body);
-      const match = await recordToss(data);
+      const { tenantId } = (req as any).user;
+      const match = await recordToss(data, tenantId);
       res.json(match);
     } catch (error) {
       next(error);
@@ -68,7 +70,8 @@ export class MatchesController {
   async startInnings(req: Request, res: Response, next: NextFunction) {
     try {
       const data = startInningsSchema.parse(req.body);
-      const innings = await startInnings(data);
+      const { tenantId } = (req as any).user;
+      const innings = await startInnings(data, tenantId);
       res.status(201).json(innings);
     } catch (error) {
       next(error);
@@ -78,7 +81,8 @@ export class MatchesController {
   async recordBall(req: Request, res: Response, next: NextFunction) {
     try {
       const data = ballInputSchema.parse(req.body);
-      const ball = await recordBall(data);
+      const { tenantId } = (req as any).user;
+      const ball = await recordBall(data, tenantId);
       res.status(201).json(ball);
     } catch (error) {
       next(error);
@@ -87,7 +91,8 @@ export class MatchesController {
 
   async undo(req: Request, res: Response, next: NextFunction) {
     try {
-      const ball = await undoLastBall(req.params.id);
+      const { tenantId } = (req as any).user;
+      const ball = await undoLastBall(req.params.id, tenantId);
       res.json({ removedBall: ball, message: 'Ball removed, stats recomputed' });
     } catch (error) {
       next(error);
@@ -97,7 +102,8 @@ export class MatchesController {
   async declareInnings(req: Request, res: Response, next: NextFunction) {
     try {
       const data = declareInningsSchema.parse(req.body);
-      const innings = await declareInnings(data);
+      const { tenantId } = (req as any).user;
+      const innings = await declareInnings(data, tenantId);
       res.json(innings);
     } catch (error) {
       next(error);
@@ -106,7 +112,8 @@ export class MatchesController {
 
   async getScoreboard(req: Request, res: Response, next: NextFunction) {
     try {
-      const scoreboard = await getMatchScoreboard(req.params.id);
+      const { tenantId } = (req as any).user;
+      const scoreboard = await getMatchScoreboard(req.params.id, tenantId);
       res.json(scoreboard);
     } catch (error) {
       next(error);
@@ -119,7 +126,8 @@ export class MatchesController {
       if (isNaN(inningsNumber) || inningsNumber < 1) {
         throw new ValidationError('Invalid innings number');
       }
-      const scoreboard = await getInningsScoreboard(req.params.id, inningsNumber);
+      const { tenantId } = (req as any).user;
+      const scoreboard = await getInningsScoreboard(req.params.id, inningsNumber, tenantId);
       res.json(scoreboard);
     } catch (error) {
       next(error);
@@ -132,7 +140,8 @@ export class MatchesController {
       if (isNaN(overNumber) || overNumber < 1) {
         throw new ValidationError('Invalid over number');
       }
-      const over = await getOverDetails(req.params.id, overNumber);
+      const { tenantId } = (req as any).user;
+      const over = await getOverDetails(req.params.id, overNumber, tenantId);
       res.json(over);
     } catch (error) {
       next(error);
@@ -141,7 +150,8 @@ export class MatchesController {
 
   async getPerformance(req: Request, res: Response, next: NextFunction) {
     try {
-      const performance = await getMatchPerformance(req.params.id);
+      const { tenantId } = (req as any).user;
+      const performance = await getMatchPerformance(req.params.id, tenantId);
       res.json(performance);
     } catch (error) {
       next(error);
@@ -150,6 +160,12 @@ export class MatchesController {
 
   async delete(req: Request, res: Response, next: NextFunction) {
     try {
+      const { tenantId } = (req as any).user;
+      // Verify ownership before hard delete
+      const match = await prisma.match.findFirst({
+        where: { id: req.params.id, tenantId },
+      });
+      if (!match) throw new ForbiddenError('Match not found or access denied');
       await prisma.match.delete({ where: { id: req.params.id } });
       res.status(204).send();
     } catch (error) {

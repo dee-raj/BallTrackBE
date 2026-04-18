@@ -2,6 +2,14 @@ import { Request, Response, NextFunction } from 'express';
 import { usersService } from '../services';
 import { updateProfileSchema, changePasswordSchema } from '../dto';
 import { validateBody } from '../../../middlewares/validate';
+import { z } from 'zod';
+
+const inviteUserSchema = z.object({
+  email: z.string().email(),
+  fullName: z.string().min(2).max(255),
+  password: z.string().min(6),
+  role: z.literal('scorer'),
+});
 
 export class UsersController {
   async getProfile(req: Request, res: Response, next: NextFunction) {
@@ -36,10 +44,24 @@ export class UsersController {
     }
   }
 
-  async getAllUsers(_req: Request, res: Response, next: NextFunction) {
+  /** Admin-only: list all users within the caller's tenant */
+  async getAllUsers(req: Request, res: Response, next: NextFunction) {
     try {
-      const users = await usersService.getAllUsers();
+      const { tenantId } = (req as any).user;
+      const users = await usersService.getAllUsers(tenantId);
       res.json(users);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Admin-only: create a scorer account within the caller's tenant */
+  async inviteUser(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { tenantId } = (req as any).user;
+      const data = inviteUserSchema.parse(req.body);
+      const user = await usersService.inviteUser(data, tenantId);
+      res.status(201).json(user);
     } catch (error) {
       next(error);
     }
@@ -49,3 +71,4 @@ export class UsersController {
 export const usersController = new UsersController();
 export const updateProfileValidation = validateBody(updateProfileSchema);
 export const changePasswordValidation = validateBody(changePasswordSchema);
+export const inviteUserValidation = validateBody(inviteUserSchema);

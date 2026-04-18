@@ -11,6 +11,7 @@ export const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   fullName: z.string().min(2).max(255),
+  orgName: z.string().min(2).max(100),  // becomes the Tenant name
 });
 
 export type RegisterDto = z.infer<typeof registerSchema>;

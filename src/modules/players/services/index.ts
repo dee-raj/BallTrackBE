@@ -4,21 +4,21 @@ import type { CreatePlayerDto, UpdatePlayerDto, AddPlayerToTeamDto, RemovePlayer
 import { UserRole } from '../../../shared/constants';
 
 export class PlayersService {
-  async getAll() {
-    return playersRepository.findAll();
+  async getAll(tenantId: string) {
+    return playersRepository.findAll(tenantId);
   }
 
-  async getById(id: string) {
-    const player = await playersRepository.findById(id);
+  async getById(id: string, tenantId: string) {
+    const player = await playersRepository.findById(id, tenantId);
     if (!player) {
       throw new NotFoundError('Player not found');
     }
     return player;
   }
 
-  async create(data: CreatePlayerDto, _role: UserRole) {
+  async create(data: CreatePlayerDto, _role: UserRole, tenantId: string) {
     if (data.email) {
-      const existing = await playersRepository.findByEmail(data.email);
+      const existing = await playersRepository.findByEmail(data.email, tenantId);
       if (existing) {
         throw new ConflictError('Email already registered');
       }
@@ -30,17 +30,18 @@ export class PlayersService {
       email: data.email,
       photoUrl: data.photoUrl,
       dateOfBirth: data.dateOfBirth ? new Date(data.dateOfBirth) : undefined,
+      tenantId,
     });
   }
 
-  async update(id: string, data: UpdatePlayerDto) {
-    const existingPlayer = await playersRepository.findById(id);
+  async update(id: string, data: UpdatePlayerDto, tenantId: string) {
+    const existingPlayer = await playersRepository.findById(id, tenantId);
     if (!existingPlayer) {
       throw new NotFoundError('Player not found');
     }
 
     if (data.email && data.email !== existingPlayer.email) {
-      const emailTaken = await playersRepository.findByEmail(data.email);
+      const emailTaken = await playersRepository.findByEmail(data.email, tenantId);
       if (emailTaken) {
         throw new ConflictError('Email already registered');
       }
@@ -55,15 +56,14 @@ export class PlayersService {
     });
   }
 
-  async delete(id: string) {
-    const existing = await playersRepository.findById(id);
+  async delete(id: string, tenantId: string) {
+    const existing = await playersRepository.findById(id, tenantId);
     if (!existing) {
       throw new NotFoundError('Player not found');
     }
     try {
       return await playersRepository.delete(id);
     } catch (error: any) {
-      // Prisma error code for foreign key constraint failed
       if (error.code === 'P2003') {
         throw new ConflictError(
           'Cannot delete player. They have participated in matches or are assigned to a team. Remove them from matches/teams first.'
@@ -73,8 +73,8 @@ export class PlayersService {
     }
   }
 
-  async addToTeam(teamId: string, data: AddPlayerToTeamDto) {
-    const player = await playersRepository.findById(data.playerId);
+  async addToTeam(teamId: string, data: AddPlayerToTeamDto, tenantId: string) {
+    const player = await playersRepository.findById(data.playerId, tenantId);
     if (!player) {
       throw new NotFoundError('Player not found');
     }
