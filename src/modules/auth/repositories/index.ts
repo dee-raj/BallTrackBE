@@ -23,6 +23,38 @@ export class AuthRepository {
       where: { id },
     });
   }
+
+  async updateResetToken(email: string, token: string | null, expiry: Date | null): Promise<void> {
+    await prisma.user.update({
+      where: { email },
+      data: {
+        resetToken: token,
+        resetTokenExpiry: expiry,
+      },
+    });
+  }
+
+  async findByResetToken(token: string): Promise<User | null> {
+    return prisma.user.findFirst({
+      where: {
+        resetToken: token,
+        resetTokenExpiry: {
+          gt: new Date(),
+        },
+      },
+    });
+  }
+
+  async updatePassword(id: string, passwordHash: string): Promise<void> {
+    await prisma.user.update({
+      where: { id },
+      data: {
+        passwordHash,
+        resetToken: null,
+        resetTokenExpiry: null,
+      },
+    });
+  }
 }
 
 export const authRepository = new AuthRepository();

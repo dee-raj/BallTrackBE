@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services';
-import { loginSchema, registerSchema } from '../dto';
+import { loginSchema, registerSchema, forgotPasswordSchema, resetPasswordSchema } from '../dto';
 import { validateBody } from '../../../middlewares/validate';
 
 export class AuthController {
@@ -31,9 +31,29 @@ export class AuthController {
       next(error);
     }
   }
+
+  async forgotPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await authService.forgotPassword(req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async resetPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = await authService.resetPassword(req.body);
+      res.status(200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const authController = new AuthController();
 
 export const registerValidation = validateBody(registerSchema);
 export const loginValidation = validateBody(loginSchema);
+export const forgotPasswordValidation = validateBody(forgotPasswordSchema);
+export const resetPasswordValidation = validateBody(resetPasswordSchema);
