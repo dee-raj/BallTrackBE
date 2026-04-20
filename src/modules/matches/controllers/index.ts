@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import {
   createMatch,
+  updateMatch,
   recordToss,
   startInnings,
   recordBall,
@@ -15,6 +16,7 @@ import {
 } from '../services';
 import {
   createMatchSchema,
+  updateMatchSchema,
   tossSchema,
   ballInputSchema,
   startInningsSchema,
@@ -27,7 +29,7 @@ import { ValidationError, ForbiddenError } from '../../../middlewares/error_hand
 export class MatchesController {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const matches = await getAllMatches(tenantId);
       res.json(matches);
     } catch (error) {
@@ -37,7 +39,7 @@ export class MatchesController {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const match = await getMatchById(req.params.id, tenantId);
       res.json(match);
     } catch (error) {
@@ -51,6 +53,17 @@ export class MatchesController {
       const { id: userId, tenantId } = (req as any).user;
       const match = await createMatch(data, userId, tenantId);
       res.status(201).json(match);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async update(req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = updateMatchSchema.parse(req.body);
+      const { tenantId } = (req as any).user;
+      const match = await updateMatch(req.params.id, data, tenantId);
+      res.json(match);
     } catch (error) {
       next(error);
     }
@@ -112,7 +125,7 @@ export class MatchesController {
 
   async getScoreboard(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const scoreboard = await getMatchScoreboard(req.params.id, tenantId);
       res.json(scoreboard);
     } catch (error) {
@@ -126,7 +139,7 @@ export class MatchesController {
       if (isNaN(inningsNumber) || inningsNumber < 1) {
         throw new ValidationError('Invalid innings number');
       }
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const scoreboard = await getInningsScoreboard(req.params.id, inningsNumber, tenantId);
       res.json(scoreboard);
     } catch (error) {
@@ -140,7 +153,7 @@ export class MatchesController {
       if (isNaN(overNumber) || overNumber < 1) {
         throw new ValidationError('Invalid over number');
       }
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const over = await getOverDetails(req.params.id, overNumber, tenantId);
       res.json(over);
     } catch (error) {
@@ -150,7 +163,7 @@ export class MatchesController {
 
   async getPerformance(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const performance = await getMatchPerformance(req.params.id, tenantId);
       res.json(performance);
     } catch (error) {
@@ -177,6 +190,7 @@ export class MatchesController {
 export const matchesController = new MatchesController();
 
 export const createMatchValidation = validateBody(createMatchSchema);
+export const updateMatchValidation = validateBody(updateMatchSchema);
 export const tossValidation = validateBody(tossSchema);
 export const ballValidation = validateBody(ballInputSchema);
 export const startInningsValidation = validateBody(startInningsSchema);

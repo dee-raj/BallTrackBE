@@ -15,7 +15,7 @@ export class TournamentService {
     });
   }
 
-  async getTournament(id: string, tenantId: string) {
+  async getTournament(id: string, tenantId?: string) {
     const tournament = await tournamentRepository.findById(id, tenantId);
     if (!tournament) {
       throw new NotFoundError('Tournament not found');
@@ -23,7 +23,7 @@ export class TournamentService {
     return tournament;
   }
 
-  async getAllTournaments(tenantId: string) {
+  async getAllTournaments(tenantId?: string) {
     return tournamentRepository.findAll(tenantId);
   }
 
@@ -65,7 +65,7 @@ export class TournamentService {
     return tournamentRepository.removeTeam(tournamentId, teamId);
   }
 
-  async getPointsTable(tournamentId: string, tenantId: string) {
+  async getPointsTable(tournamentId: string, tenantId?: string) {
     const tournament = await tournamentRepository.findById(tournamentId, tenantId);
     if (!tournament) {
       throw new NotFoundError('Tournament not found');

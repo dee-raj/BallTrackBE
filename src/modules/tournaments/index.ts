@@ -1,21 +1,21 @@
 import { Router } from 'express';
 import { tournamentController, createTournamentValidation, updateTournamentValidation, addTeamsValidation } from './controllers';
-import { authenticate } from '../../middlewares/authenticate';
+import { authenticate, optionalAuthenticate } from '../../middlewares/authenticate';
 import { authorize } from '../../middlewares/authorize';
 import { UserRole } from '../../shared/constants';
 
 const router = Router();
 
-// All tournament reads require auth — tenantId scoping applied
+// Tournament reading is public
 router.get(
   '/',
-  authenticate,
+  optionalAuthenticate,
   tournamentController.getAll.bind(tournamentController)
 );
 
 router.get(
   '/:id',
-  authenticate,
+  optionalAuthenticate,
   tournamentController.getById.bind(tournamentController)
 );
 
@@ -59,7 +59,7 @@ router.delete(
 
 router.get(
   '/:id/points-table',
-  authenticate,
+  optionalAuthenticate,
   tournamentController.getPointsTable.bind(tournamentController)
 );
 

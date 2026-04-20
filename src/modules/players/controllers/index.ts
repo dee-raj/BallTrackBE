@@ -12,7 +12,7 @@ import { UserRole } from '../../../shared/constants';
 export class PlayersController {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const players = await playersService.getAll(tenantId);
       res.json(players);
     } catch (error) {
@@ -22,7 +22,7 @@ export class PlayersController {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const player = await playersService.getById(req.params.id, tenantId);
       res.json(player);
     } catch (error) {

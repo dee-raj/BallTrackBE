@@ -6,7 +6,7 @@ import { validateBody } from '../../../middlewares/validate';
 export class TournamentController {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const tournaments = await tournamentService.getAllTournaments(tenantId);
       res.json(tournaments);
     } catch (error) {
@@ -16,7 +16,7 @@ export class TournamentController {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const tournament = await tournamentService.getTournament(req.params.id, tenantId);
       res.json(tournament);
     } catch (error) {
@@ -79,7 +79,7 @@ export class TournamentController {
 
   async getPointsTable(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const pointsTable = await tournamentService.getPointsTable(req.params.id, tenantId);
       res.json(pointsTable);
     } catch (error) {

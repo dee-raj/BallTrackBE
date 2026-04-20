@@ -12,8 +12,15 @@ export const createMatchSchema = z.object({
 });
 
 
-
 export type CreateMatchDto = z.infer<typeof createMatchSchema>;
+
+export const updateMatchSchema = z.object({
+  venue: z.string().max(255).optional(),
+  overs: z.number().int().min(1).max(100).optional(),
+});
+
+export type UpdateMatchDto = z.infer<typeof updateMatchSchema>;
+
 
 export const tossSchema = z.object({
   matchId: z.string().uuid(),

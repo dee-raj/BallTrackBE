@@ -3,11 +3,11 @@ import { ConflictError, NotFoundError } from '../../../middlewares/error_handler
 import type { CreateTeamDto, UpdateTeamDto } from '../dto';
 
 export class TeamsService {
-  async getAll(tenantId: string) {
+  async getAll(tenantId?: string) {
     return teamsRepository.findAll(tenantId);
   }
 
-  async getById(id: string, tenantId: string) {
+  async getById(id: string, tenantId?: string) {
     const team = await teamsRepository.findById(id, tenantId);
     if (!team) {
       throw new NotFoundError('Team not found');

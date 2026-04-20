@@ -1,22 +1,22 @@
 import { Router } from 'express';
 import { teamsController, createTeamValidation, updateTeamValidation } from './controllers';
-import { authenticate } from '../../middlewares/authenticate';
+import { authenticate, optionalAuthenticate } from '../../middlewares/authenticate';
 import { authorize } from '../../middlewares/authorize';
 import { UserRole } from '../../shared/constants';
 import { playersController, addToTeamValidation, removeFromTeamValidation } from '../players/controllers';
 
 const router = Router();
 
-// All team endpoints require authentication — tenantId is extracted from JWT
+// Team viewing is public
 router.get(
   '/',
-  authenticate,
+  optionalAuthenticate,
   teamsController.getAll.bind(teamsController)
 );
 
 router.get(
   '/:id',
-  authenticate,
+  optionalAuthenticate,
   teamsController.getById.bind(teamsController)
 );
 
@@ -46,7 +46,7 @@ router.delete(
 // Team → Players sub-routes
 router.get(
   '/:teamId/players',
-  authenticate,
+  optionalAuthenticate,
   playersController.getTeamPlayers.bind(playersController)
 );
 

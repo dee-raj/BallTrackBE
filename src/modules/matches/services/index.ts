@@ -3,6 +3,7 @@ import { NotFoundError, ConflictError, ValidationError, ForbiddenError } from '.
 import prisma from '../../../database';
 import type {
   CreateMatchDto,
+  UpdateMatchDto,
   TossDto,
   BallInputDto,
   StartInningsDto,
@@ -186,9 +187,27 @@ export async function createMatch(data: CreateMatchDto, userId: string, tenantId
   });
 }
 
-export async function getMatchById(id: string, tenantId: string) {
+export async function updateMatch(id: string, data: UpdateMatchDto, tenantId: string) {
   const match = await prisma.match.findFirst({
     where: { id, tenantId },
+  });
+  if (!match) throw new NotFoundError('Match not found');
+
+  return prisma.match.update({
+    where: { id },
+    data: {
+      venue: data.venue,
+      overs: data.overs,
+    },
+  });
+}
+
+export async function getMatchById(id: string, tenantId?: string) {
+  const where: any = { id };
+  if (tenantId) where.tenantId = tenantId;
+
+  const match = await prisma.match.findFirst({
+    where,
     include: {
       homeTeam: true,
       awayTeam: true,
@@ -207,9 +226,12 @@ export async function getMatchById(id: string, tenantId: string) {
   return match;
 }
 
-export async function getAllMatches(tenantId: string) {
+export async function getAllMatches(tenantId?: string) {
+  const where: any = {};
+  if (tenantId) where.tenantId = tenantId;
+
   return prisma.match.findMany({
-    where: { tenantId },
+    where,
     include: {
       homeTeam: true,
       awayTeam: true,
@@ -526,9 +548,12 @@ export async function declareInnings(data: DeclareInningsDto, tenantId: string) 
   return result.innings;
 }
 
-export async function getMatchScoreboard(matchId: string, tenantId: string) {
+export async function getMatchScoreboard(matchId: string, tenantId?: string) {
+  const where: any = { id: matchId };
+  if (tenantId) where.tenantId = tenantId;
+
   const match = await prisma.match.findFirst({
-    where: { id: matchId, tenantId },
+    where,
     include: {
       homeTeam: true,
       awayTeam: true,
@@ -575,8 +600,11 @@ export async function getMatchScoreboard(matchId: string, tenantId: string) {
   };
 }
 
-export async function getInningsScoreboard(matchId: string, inningsNumber: number, tenantId: string) {
-  const match = await prisma.match.findFirst({ where: { id: matchId, tenantId } });
+export async function getInningsScoreboard(matchId: string, inningsNumber: number, tenantId?: string) {
+  const where: any = { id: matchId };
+  if (tenantId) where.tenantId = tenantId;
+
+  const match = await prisma.match.findFirst({ where });
   if (!match) throw new NotFoundError('Match not found');
 
   const innings = await prisma.innings.findFirst({
@@ -614,8 +642,11 @@ export async function getInningsScoreboard(matchId: string, inningsNumber: numbe
   };
 }
 
-export async function getOverDetails(matchId: string, overNumber: number, tenantId: string) {
-  const match = await prisma.match.findFirst({ where: { id: matchId, tenantId } });
+export async function getOverDetails(matchId: string, overNumber: number, tenantId?: string) {
+  const where: any = { id: matchId };
+  if (tenantId) where.tenantId = tenantId;
+
+  const match = await prisma.match.findFirst({ where });
   if (!match) throw new NotFoundError('Match not found');
 
   const activeInnings = await prisma.innings.findFirst({
@@ -634,9 +665,12 @@ export async function getOverDetails(matchId: string, overNumber: number, tenant
   });
 }
 
-export async function getMatchPerformance(matchId: string, tenantId: string) {
+export async function getMatchPerformance(matchId: string, tenantId?: string) {
+  const where: any = { id: matchId };
+  if (tenantId) where.tenantId = tenantId;
+
   const match = await prisma.match.findFirst({
-    where: { id: matchId, tenantId },
+    where,
     include: { homeTeam: true, awayTeam: true },
   });
   if (!match) throw new NotFoundError('Match not found');
@@ -753,9 +787,9 @@ export async function getMatchPerformance(matchId: string, tenantId: string) {
       const bowlingScorecard = Array.from(bowlingMap.values()).map((b) => ({
         playerId: b.playerId,
         playerName: b.playerName,
-        overs: toOversNotation(b.ballsFaced),
+        oversDisplay: toOversNotation(b.ballsFaced),
         maidens: b.maidens,
-        runs: b.runsConceded,
+        runsConceded: b.runsConceded,
         wickets: b.wickets,
         noBalls: b.noBalls,
         wides: b.wides,
@@ -779,6 +813,6 @@ export async function getMatchPerformance(matchId: string, tenantId: string) {
     matchId: match.id,
     homeTeam: match.homeTeam,
     awayTeam: match.awayTeam,
-    innings: performanceData,
+    performances: performanceData,
   };
 }

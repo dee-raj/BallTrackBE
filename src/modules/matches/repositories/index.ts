@@ -50,6 +50,7 @@ export class MatchesRepository {
     scorerId: string;
     homeTeamId: string;
     awayTeamId: string;
+    tenantId: string;
   }): Promise<Match> {
     return prisma.match.create({
       data,

@@ -1,21 +1,21 @@
 import { Router } from 'express';
-import { matchesController, createMatchValidation, ballValidation, startInningsValidation, declareValidation } from './controllers';
-import { authenticate } from '../../middlewares/authenticate';
+import { matchesController, createMatchValidation, updateMatchValidation, ballValidation, startInningsValidation, declareValidation } from './controllers';
+import { authenticate, optionalAuthenticate } from '../../middlewares/authenticate';
 import { authorize } from '../../middlewares/authorize';
 import { UserRole } from '../../shared/constants';
 
 const router = Router();
 
-// All match endpoints require authentication — tenantId is extracted from JWT
+// Match viewing is public (optional auth for tenant scoping)
 router.get(
   '/',
-  authenticate,
+  optionalAuthenticate,
   matchesController.getAll.bind(matchesController)
 );
 
 router.get(
   '/:id',
-  authenticate,
+  optionalAuthenticate,
   matchesController.getById.bind(matchesController)
 );
 
@@ -25,6 +25,14 @@ router.post(
   authorize(UserRole.admin),
   createMatchValidation,
   matchesController.create.bind(matchesController)
+);
+
+router.patch(
+  '/:id',
+  authenticate,
+  authorize(UserRole.admin),
+  updateMatchValidation,
+  matchesController.update.bind(matchesController)
 );
 
 router.post(
@@ -67,25 +75,25 @@ router.post(
 
 router.get(
   '/:id/scoreboard',
-  authenticate,
+  optionalAuthenticate,
   matchesController.getScoreboard.bind(matchesController)
 );
 
 router.get(
   '/:id/innings/:number',
-  authenticate,
+  optionalAuthenticate,
   matchesController.getInningsScoreboard.bind(matchesController)
 );
 
 router.get(
   '/:id/over/:overNumber',
-  authenticate,
+  optionalAuthenticate,
   matchesController.getOver.bind(matchesController)
 );
 
 router.get(
   '/:id/performance',
-  authenticate,
+  optionalAuthenticate,
   matchesController.getPerformance.bind(matchesController)
 );
 

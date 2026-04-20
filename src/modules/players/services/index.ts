@@ -4,11 +4,11 @@ import type { CreatePlayerDto, UpdatePlayerDto, AddPlayerToTeamDto, RemovePlayer
 import { UserRole } from '../../../shared/constants';
 
 export class PlayersService {
-  async getAll(tenantId: string) {
+  async getAll(tenantId?: string) {
     return playersRepository.findAll(tenantId);
   }
 
-  async getById(id: string, tenantId: string) {
+  async getById(id: string, tenantId?: string) {
     const player = await playersRepository.findById(id, tenantId);
     if (!player) {
       throw new NotFoundError('Player not found');

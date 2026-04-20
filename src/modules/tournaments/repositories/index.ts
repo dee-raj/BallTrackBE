@@ -2,9 +2,12 @@ import prisma from '../../../database';
 import { Tournament, TournamentType } from '@prisma/client';
 
 export class TournamentRepository {
-  async findById(id: string, tenantId: string) {
+  async findById(id: string, tenantId?: string) {
+    const where: any = { id };
+    if (tenantId) where.tenantId = tenantId;
+
     return prisma.tournament.findFirst({
-      where: { id, tenantId },
+      where,
       include: {
         teams: {
           include: {
@@ -23,9 +26,12 @@ export class TournamentRepository {
     });
   }
 
-  async findAll(tenantId: string) {
+  async findAll(tenantId?: string) {
+    const where: any = {};
+    if (tenantId) where.tenantId = tenantId;
+
     return prisma.tournament.findMany({
-      where: { tenantId },
+      where,
       orderBy: { createdAt: 'desc' },
     });
   }

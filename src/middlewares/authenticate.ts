@@ -33,8 +33,6 @@ export async function authenticate(
     const user = await prisma.user.findUnique({
       where: {
         id: decoded.userId,
-        // For superadmin, tenantId is null — skip cross-tenant guard
-        // For regular users, enforce tenantId match to prevent token reuse across tenants
         ...(isSuperAdmin ? {} : { tenantId: decoded.tenantId ?? undefined }),
       },
       select: safeUserSelect,
@@ -53,5 +51,40 @@ export async function authenticate(
     } else {
       next(error);
     }
+  }
+}
+
+export async function optionalAuthenticate(
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next();
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, config.jwt.secret) as JwtPayload;
+
+    const isSuperAdmin = decoded.role === UserRole.superadmin;
+
+    const user = await prisma.user.findUnique({
+      where: {
+        id: decoded.userId,
+        ...(isSuperAdmin ? {} : { tenantId: decoded.tenantId ?? undefined }),
+      },
+      select: safeUserSelect,
+    });
+
+    if (user && user.isActive) {
+      (req as any).user = user;
+    }
+    next();
+  } catch (error) {
+    // If token is invalid, we just treat them as guest instead of throwing
+    next();
   }
 }

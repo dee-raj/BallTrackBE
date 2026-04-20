@@ -6,7 +6,7 @@ import { validateBody } from '../../../middlewares/validate';
 export class TeamsController {
   async getAll(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const teams = await teamsService.getAll(tenantId);
       res.json(teams);
     } catch (error) {
@@ -16,7 +16,7 @@ export class TeamsController {
 
   async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const { tenantId } = (req as any).user;
+      const tenantId = (req as any).user?.tenantId || (req.query.tenantId as string);
       const team = await teamsService.getById(req.params.id, tenantId);
       res.json(team);
     } catch (error) {

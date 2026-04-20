@@ -1,21 +1,21 @@
 import { Router } from 'express';
 import { playersController, createPlayerValidation, updatePlayerValidation, addToTeamValidation } from './controllers';
-import { authenticate } from '../../middlewares/authenticate';
+import { authenticate, optionalAuthenticate } from '../../middlewares/authenticate';
 import { authorize } from '../../middlewares/authorize';
 import { UserRole } from '../../shared/constants';
 
 const router = Router();
 
-// All player reads require auth — tenantId extracted from JWT for scoped queries
+// Players reading is public
 router.get(
   '/',
-  authenticate,
+  optionalAuthenticate,
   playersController.getAll.bind(playersController)
 );
 
 router.get(
   '/team/:teamId',
-  authenticate,
+  optionalAuthenticate,
   playersController.getTeamPlayers.bind(playersController)
 );
 
@@ -36,7 +36,7 @@ router.delete(
 
 router.get(
   '/:id',
-  authenticate,
+  optionalAuthenticate,
   playersController.getById.bind(playersController)
 );
 
