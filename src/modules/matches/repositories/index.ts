@@ -52,8 +52,23 @@ export class MatchesRepository {
     awayTeamId: string;
     tenantId: string;
   }): Promise<Match> {
+    const {
+      tenantId,
+      createdById,
+      scorerId,
+      homeTeamId,
+      awayTeamId,
+      ...rest
+    } = data;
     return prisma.match.create({
-      data,
+      data: {
+        ...rest,
+        tenant: { connect: { id: tenantId } },
+        createdBy: { connect: { id: createdById } },
+        scorer: { connect: { id: scorerId } },
+        homeTeam: { connect: { id: homeTeamId } },
+        awayTeam: { connect: { id: awayTeamId } },
+      },
     });
   }
 
@@ -102,10 +117,14 @@ export class InningsRepository {
     battingTeamId: string;
     bowlingTeamId: string;
   }): Promise<Innings> {
+    const { matchId, battingTeamId, bowlingTeamId, ...rest } = data;
     return prisma.innings.create({
       data: {
-        ...data,
+        ...rest,
         status: 'in_progress',
+        match: { connect: { id: matchId } },
+        battingTeam: { connect: { id: battingTeamId } },
+        bowlingTeam: { connect: { id: bowlingTeamId } },
       },
     });
   }
@@ -162,8 +181,33 @@ export class BallsRepository {
     isStrikeRotation: boolean;
     overComplete: OverSetComplete;
   }): Promise<Ball> {
+    const {
+      inningsId,
+      batsmanPlayerId,
+      nonStrikerPlayerId,
+      bowlerPlayerId,
+      wicketPlayerId,
+      fielderPlayerId,
+      ...rest
+    } = data;
+
+    const connectData: any = {
+      ...rest,
+      innings: { connect: { id: inningsId } },
+      batsman: { connect: { id: batsmanPlayerId } },
+      nonStriker: { connect: { id: nonStrikerPlayerId } },
+      bowler: { connect: { id: bowlerPlayerId } },
+    };
+
+    if (wicketPlayerId) {
+      connectData.wicketPlayer = { connect: { id: wicketPlayerId } };
+    }
+    if (fielderPlayerId) {
+      connectData.fielder = { connect: { id: fielderPlayerId } };
+    }
+
     return prisma.ball.create({
-      data: data as any,
+      data: connectData,
     });
   }
 }

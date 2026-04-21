@@ -49,8 +49,13 @@ export class TournamentRepository {
     createdById: string;
     tenantId: string;
   }): Promise<Tournament> {
+    const { tenantId, createdById, ...rest } = data;
     return prisma.tournament.create({
-      data,
+      data: {
+        ...rest,
+        tenant: { connect: { id: tenantId } },
+        createdBy: { connect: { id: createdById } },
+      },
     });
   }
 

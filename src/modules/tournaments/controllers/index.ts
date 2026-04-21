@@ -28,6 +28,9 @@ export class TournamentController {
     try {
       const data = createTournamentSchema.parse(req.body);
       const { id: userId, tenantId } = (req as any).user;
+      if (!tenantId) {
+        return res.status(400).json({ message: 'User must belong to a tenant to create a tournament.' });
+      }
       const tournament = await tournamentService.createTournament(data, userId, tenantId);
       res.status(201).json(tournament);
     } catch (error) {

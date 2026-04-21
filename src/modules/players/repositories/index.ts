@@ -35,8 +35,12 @@ export class PlayersRepository {
     dateOfBirth?: Date;
     tenantId: string;
   }): Promise<Player> {
+    const { tenantId, ...rest } = data;
     return prisma.player.create({
-      data,
+      data: {
+        ...rest,
+        tenant: { connect: { id: tenantId } },
+      },
     });
   }
 

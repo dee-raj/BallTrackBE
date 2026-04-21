@@ -36,8 +36,13 @@ export class TeamsRepository {
     createdById: string;
     tenantId: string;
   }): Promise<Team> {
+    const { tenantId, createdById, ...rest } = data;
     return prisma.team.create({
-      data,
+      data: {
+        ...rest,
+        tenant: { connect: { id: tenantId } },
+        createdBy: { connect: { id: createdById } },
+      },
     });
   }
 

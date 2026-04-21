@@ -51,6 +51,9 @@ export class MatchesController {
     try {
       const data = createMatchSchema.parse(req.body);
       const { id: userId, tenantId } = (req as any).user;
+      if (!tenantId) {
+        return res.status(400).json({ message: 'User must belong to a tenant to create a match.' });
+      }
       const match = await createMatch(data, userId, tenantId);
       res.status(201).json(match);
     } catch (error) {
