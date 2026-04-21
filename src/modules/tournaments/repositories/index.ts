@@ -49,7 +49,17 @@ export class TournamentRepository {
     createdById: string;
     tenantId: string;
   }): Promise<Tournament> {
-    const { tenantId, createdById, ...rest } = data;
+    const { tenantId, createdById } = data;
+
+    if (!tenantId || !createdById) {
+      console.error('[TournamentRepository] Missing required IDs:', { tenantId, createdById });
+      throw new Error('Internal Server Error: Missing tenant or creator identification');
+    }
+
+    console.log(`[TournamentRepository] Creating tournament "${data.name}" for tenant ${tenantId}`);
+
+    const { tenantId: _, createdById: __, ...rest } = data;
+
     return prisma.tournament.create({
       data: {
         ...rest,

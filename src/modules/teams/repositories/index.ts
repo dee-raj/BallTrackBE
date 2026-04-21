@@ -36,10 +36,25 @@ export class TeamsRepository {
     createdById: string;
     tenantId: string;
   }): Promise<Team> {
-    const { tenantId, createdById, ...rest } = data;
+    const { tenantId, createdById, name, shortName, homeGround, logoUrl } = data;
+    
+    if (!tenantId) {
+      console.error('[TeamsRepository] Error: tenantId is missing in create call', data);
+      throw new Error('Internal Server Error: Tenant identification failed');
+    }
+    if (!createdById) {
+      console.error('[TeamsRepository] Error: createdById is missing in create call', data);
+      throw new Error('Internal Server Error: Creator identification failed');
+    }
+
+    console.log(`[TeamsRepository] Creating team "${name}" for tenant ${tenantId} by user ${createdById}`);
+
     return prisma.team.create({
       data: {
-        ...rest,
+        name,
+        shortName,
+        homeGround,
+        logoUrl,
         tenant: { connect: { id: tenantId } },
         createdBy: { connect: { id: createdById } },
       },
